@@ -1,10 +1,11 @@
-import pymupdf
 import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
 from app.tools.chunking import split_table
 from app.tools.office_native import render_native
+from app.tools.pdf import open_pdf
+from app.tools.pdfgen import PdfWriter
 
 from .office_fixtures import make_docx, make_pptx, make_xlsx
 from .test_pipeline import _wait
@@ -24,15 +25,15 @@ def test_render_native_units(tmp_path):
     assert [s["page"] for s in h["slides"]] == [0, 1, 2]
     assert h["slides"][0]["notes"].startswith("발표자 노트")
     assert h["slides"][1]["charts"][0]["rows"][1] == ["1월", 120.0]
-    with pymupdf.open(pdf) as d:
-        assert d.page_count == 3 and "120" in d[1].get_text() and "120.0" not in d[1].get_text()
+    with open_pdf(pdf) as d, d.page(1) as p1:
+        assert d.page_count == 3 and "120" in p1.text() and "120.0" not in p1.text()
 
     pdf, h = render_native(make_xlsx(tmp_path / "x.xlsx", rows=130), tmp_path / "o", "xlsx")
     assert h["sheets"][0] == {"sheet": "측정값", "rows": 130, "cols": 4, "truncated": False}
-    with pymupdf.open(pdf) as d:
+    with open_pdf(pdf) as d:
         # every page is a whole block: one table whose first row is the header
         assert d.page_count == len(h["unit_pages"]) == 7  # ceil(130/24) + 1 summary sheet
-        assert all(p.find_tables().tables[0].extract()[0][0] in ("일자", "장비") for p in d)
+        assert all(p.tables()[0].extract()[0][0] in ("일자", "장비") for p in d.pages())
 
 
 def _run(client, path, name):
@@ -105,10 +106,10 @@ def test_pptx_libreoffice_path_adds_chart_data(tmp_path, monkeypatch):
         # Stand-in for LibreOffice: a PDF with one page per slide and no chart table.
         out_dir.mkdir(parents=True, exist_ok=True)
         pdf = out_dir / "lo.pdf"
-        d = pymupdf.open()
+        w = PdfWriter(pdf)
         for title in ("프로젝트 개요", "월별 생산량", "점검 결과"):
-            d.new_page(width=960, height=540).insert_text((40, 60), title, fontsize=24, fontname="korea")
-        d.save(pdf)
+            w.new_page(960, 540).text(40, 60, title, size=24)
+        w.save()
         return pdf
 
     monkeypatch.setattr(intake, "soffice_bin", lambda: "soffice")

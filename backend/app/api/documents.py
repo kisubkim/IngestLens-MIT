@@ -5,7 +5,6 @@ import uuid
 from collections.abc import AsyncIterator
 from pathlib import Path
 
-import pymupdf
 from fastapi import APIRouter, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
@@ -15,7 +14,7 @@ from ..config import settings
 from ..db import session
 from ..graph.pipeline import start_run
 from ..models import Document, Run, to_dict
-from ..tools.pdf import render_png
+from ..tools.pdf import open_pdf
 
 router = APIRouter(prefix="/api/documents", tags=["documents"])
 CHUNK = 1 << 20
@@ -136,11 +135,11 @@ async def create_run(doc_id: str) -> dict:
 
 
 def _render_cached(pdf_path: str, page: int, dpi: int, out: Path) -> None:
-    with pymupdf.open(pdf_path) as d:
+    with open_pdf(pdf_path) as d:
         if not 0 <= page < d.page_count:
             raise IndexError(page)
         out.parent.mkdir(parents=True, exist_ok=True)
-        out.write_bytes(render_png(d[page], dpi))
+        out.write_bytes(d.render(page, dpi))
 
 
 @router.get("/{doc_id}/pages/{page}.png")

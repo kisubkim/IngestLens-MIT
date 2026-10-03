@@ -10,12 +10,13 @@ import json
 import sys
 from pathlib import Path
 
-import pymupdf
+from PIL import Image
 
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "evals" / "synthetic"
 sys.path.insert(0, str(ROOT / "backend"))
 
+from app.tools.pdfgen import PdfWriter  # noqa: E402
 from tests.office_fixtures import make_docx, make_pptx, make_xlsx  # noqa: E402
 
 FILLER = "이 절의 내용은 정기 교육 자료에도 포함되며 담당자는 변경 사항을 공지해야 한다. "
@@ -31,57 +32,52 @@ SECTIONS = [
 ]
 
 
-def _text_page(doc, title, fact):
-    page = doc.new_page()
-    page.insert_text((72, 80), title, fontsize=18, fontname="korea")
+def _text_page(w: PdfWriter, title, fact):
+    w.new_page()
+    w.text(72, 80, title, size=18)
     body = FILLER * 2 + fact + " " + FILLER * 3
-    rc = page.insert_textbox(pymupdf.Rect(72, 110, 520, 500), body, fontsize=10, fontname="korea")
-    assert rc >= 0, f"text overflow on {title}"
+    assert w.textbox((72, 110, 520, 500), body, size=10) == 0, f"text overflow on {title}"
 
 
 def make_manual(path: Path) -> dict:
-    doc = pymupdf.open()
+    w = PdfWriter(path)
     labels = {}
     for i, (t, f) in enumerate(SECTIONS, start=1):
-        _text_page(doc, t, f)
+        _text_page(w, t, f)
         labels[str(i)] = "text"
 
-    page = doc.new_page()  # 9: table
-    page.insert_text((72, 70), "9. 분기별 가동률", fontsize=18, fontname="korea")
+    w.new_page()  # 9: table
+    w.text(72, 70, "9. 분기별 가동률", size=18)
     rows = [["구분", "가동률", "비가동 사유"], ["1분기", "92.1%", "정기 점검"], ["2분기", "88.4%", "펌프 교체"], ["3분기", "95.0%", "없음"], ["4분기", "90.7%", "전원 공사"]]
     x0, y0, cw, rh = 72, 100, 150, 30
     for r in range(len(rows) + 1):
-        page.draw_line((x0, y0 + r * rh), (x0 + 3 * cw, y0 + r * rh))
+        w.line((x0, y0 + r * rh), (x0 + 3 * cw, y0 + r * rh))
     for c in range(4):
-        page.draw_line((x0 + c * cw, y0), (x0 + c * cw, y0 + len(rows) * rh))
+        w.line((x0 + c * cw, y0), (x0 + c * cw, y0 + len(rows) * rh))
     for r, row in enumerate(rows):
         for c, v in enumerate(row):
-            page.insert_text((x0 + c * cw + 6, y0 + r * rh + 20), v, fontsize=10, fontname="korea")
+            w.text(x0 + c * cw + 6, y0 + r * rh + 20, v, size=10)
     labels["9"] = "table"
 
-    page = doc.new_page()  # 10: vector diagram
+    w.new_page()  # 10: vector diagram
     for i in range(150):
         x, y = 60 + (i % 15) * 32, 100 + (i // 15) * 50
-        page.draw_rect(pymupdf.Rect(x, y, x + 22, y + 22))
-    page.insert_text((72, 700), "배관 연결도", fontsize=10, fontname="korea")
+        w.rect((x, y, x + 22, y + 22))
+    w.text(72, 700, "배관 연결도", size=10)
     labels["10"] = "diagram"
 
-    page = doc.new_page()  # 11: scanned (image only)
-    pix = pymupdf.Pixmap(pymupdf.csRGB, pymupdf.IRect(0, 0, 300, 420), 0)
-    pix.set_rect(pix.irect, (235, 235, 230))
-    page.insert_image(page.rect, pixmap=pix)
+    w.new_page()  # 11: scanned (image only)
+    w.image((0, 0, *w.size), Image.new("RGB", (300, 420), (235, 235, 230)))
     labels["11"] = "scanned"
 
-    page = doc.new_page()  # 12: text + figure + caption
-    page.insert_text((72, 80), "10. 냉각 계통", fontsize=18, fontname="korea")
-    page.insert_textbox(pymupdf.Rect(72, 110, 520, 360), FILLER * 4, fontsize=10, fontname="korea")
-    fig = pymupdf.Pixmap(pymupdf.csRGB, pymupdf.IRect(0, 0, 348, 220), 0)
-    fig.set_rect(fig.irect, (180, 200, 230))
-    page.insert_image(pymupdf.Rect(72, 380, 420, 600), pixmap=fig)
-    page.insert_text((72, 620), "그림 1. 냉각 계통도", fontsize=9, fontname="korea")
+    w.new_page()  # 12: text + figure + caption
+    w.text(72, 80, "10. 냉각 계통", size=18)
+    assert w.textbox((72, 110, 520, 360), FILLER * 4, size=10) == 0
+    w.image((72, 380, 420, 600), Image.new("RGB", (348, 220), (180, 200, 230)))
+    w.text(72, 620, "그림 1. 냉각 계통도", size=9)
     labels["12"] = "text"
 
-    doc.save(path)
+    w.save()
     return labels
 
 

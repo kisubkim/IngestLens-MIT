@@ -2,7 +2,7 @@
 
 import re
 
-import pymupdf
+from .pdf import Page
 
 
 def _area(b) -> float:
@@ -22,18 +22,39 @@ def _union(a, b) -> list[float]:
     return [min(a[0], b[0]), min(a[1], b[1]), max(a[2], b[2]), max(a[3], b[3])]
 
 
-def figure_regions(page: pymupdf.Page, table_bboxes: list[list[float]], min_area_ratio: float, max_regions: int) -> list[dict]:
+def cluster_drawings(page: Page, tol: float = 3.0) -> list[list[float]]:
+    """Bounding boxes of vector paths lying within tol points of each other (chained), for paths inside the page.
+    Clusters no wider or taller than tol (rules, underlines) are dropped."""
+    rect = page.rect
+    clusters: list[list[float]] = []
+    for b in sorted((d for d in page.drawings if d[0] >= rect[0] and d[1] >= rect[1] and d[2] <= rect[2] and d[3] <= rect[3]),
+                    key=lambda d: (d[3], d[0])):
+        b = list(b)
+        merged = True
+        while merged:  # a new box can join clusters that were apart until now
+            merged = False
+            for i, c in enumerate(clusters):
+                if not (c[2] < b[0] - tol or c[0] > b[2] + tol or c[3] < b[1] - tol or c[1] > b[3] + tol):
+                    b = _union(c, b)
+                    clusters.pop(i)
+                    merged = True
+                    break
+        clusters.append(b)
+    return [c for c in clusters if c[2] - c[0] > tol and c[3] - c[1] > tol]
+
+
+def figure_regions(page: Page, table_bboxes: list[list[float]], min_area_ratio: float, max_regions: int) -> list[dict]:
     """Embedded images and vector-drawing clusters large enough to be figures, merged when they overlap.
     Drawing clusters that are table ruling lines are dropped."""
     rect = page.rect
     page_area = _area(rect) or 1.0
     cands: list[dict] = []
-    for info in page.get_image_info():
-        b = _intersect(list(info["bbox"]), list(rect))
+    for img in page.images:
+        b = _intersect(img, rect)
         if _area(b) / page_area >= min_area_ratio:
             cands.append({"bbox": b, "source": "image"})
-    for r in page.cluster_drawings():
-        b = _intersect(list(r), list(rect))
+    for r in cluster_drawings(page):
+        b = _intersect(r, rect)
         if _area(b) / page_area < min_area_ratio:
             continue
         if any(_overlap_ratio(b, t) > 0.5 for t in table_bboxes):
@@ -57,15 +78,9 @@ def figure_regions(page: pymupdf.Page, table_bboxes: list[list[float]], min_area
     return sorted(merged, key=lambda m: (m["bbox"][1], m["bbox"][0]))
 
 
-def render_clip(page: pymupdf.Page, bbox: list[float], dpi: int, fmt: str, pad: float = 6) -> bytes:
-    clip = pymupdf.Rect(bbox) + (-pad, -pad, pad, pad)
-    clip &= page.rect
-    pix = page.get_pixmap(dpi=dpi, clip=clip)
-    if fmt == "jpeg":
-        if pix.alpha:
-            pix = pymupdf.Pixmap(pix, 0)
-        return pix.tobytes("jpeg", jpg_quality=85)
-    return pix.tobytes("png")
+def render_clip(page: Page, bbox: list[float], dpi: int, fmt: str, pad: float = 6) -> bytes:
+    clip = _intersect([bbox[0] - pad, bbox[1] - pad, bbox[2] + pad, bbox[3] + pad], page.rect)
+    return page.render(dpi, clip, fmt)
 
 
 def empty_cell_ratio(table) -> float:

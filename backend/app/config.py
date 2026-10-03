@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     models_file: Path = ROOT / "config" / "models.yaml"
     rules_file: Path = ROOT / "config" / "strategy_rules.yaml"
     soffice_path: str = ""  # LibreOffice binary; empty = search PATH
+    cjk_font: str = ""  # TrueType font with Hangul for PDFs the app writes; empty = search the system
     api_key: str = ""  # Bearer token for the ingest API (/api/ingest, Open WebUI loader); empty = no auth
     ingest_wait_seconds: float = 3600  # how long the Open WebUI loader waits for a run before giving up
 

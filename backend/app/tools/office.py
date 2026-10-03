@@ -5,9 +5,9 @@ import subprocess
 from pathlib import Path
 
 import filetype
-import pymupdf
 
 from ..config import settings
+from . import pdfgen
 
 OFFICE_EXT = {"doc", "docx", "ppt", "pptx", "xls", "xlsx", "odt", "odp", "ods", "rtf", "hwp"}
 IMAGE_EXT = {"png", "jpg", "jpeg", "tif", "tiff", "bmp"}
@@ -53,7 +53,4 @@ def office_to_pdf(src: Path, out_dir: Path, timeout_s: int = 600) -> Path:
 
 def image_to_pdf(src: Path, out_dir: Path) -> Path:
     out_dir.mkdir(parents=True, exist_ok=True)
-    pdf = out_dir / (src.stem + ".pdf")
-    with pymupdf.open(src) as img:
-        pdf.write_bytes(img.convert_to_pdf())
-    return pdf
+    return pdfgen.image_to_pdf(src, out_dir / (src.stem + ".pdf"))

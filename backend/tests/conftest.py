@@ -2,12 +2,15 @@ import os
 import tempfile
 from pathlib import Path
 
-import pymupdf
 import pytest
+from PIL import Image
 
 # Settings are read at import time, so point the app at a throwaway data dir first.
 os.environ["RAG_DATA_DIR"] = tempfile.mkdtemp(prefix="rag-test-")
 os.environ["RAG_SETTINGS_FILE"] = str(Path(tempfile.mkdtemp(prefix="rag-settings-")) / "settings.local.yaml")
+
+from app.tools.pdf import open_pdf  # noqa: E402
+from app.tools.pdfgen import PdfWriter  # noqa: E402
 
 BODY = (
     "Retrieval augmented generation combines a retriever with a generator. "
@@ -15,69 +18,69 @@ BODY = (
 ) * 6
 
 
-def _text_page(doc: pymupdf.Document, title: str) -> None:
-    page = doc.new_page()
-    page.insert_text((72, 80), title, fontsize=20)
-    page.insert_textbox(pymupdf.Rect(72, 110, 520, 700), BODY, fontsize=10, fontname="korea")
+def gray_image(w: int, h: int) -> Image.Image:
+    return Image.new("RGB", (w, h), (200, 210, 220))
 
 
-def _table_page(doc: pymupdf.Document) -> None:
-    page = doc.new_page()
-    page.insert_text((72, 60), "Quarterly results", fontsize=20)
+def write_pdf(path: Path, *pages) -> Path:
+    """Each page is a function drawing on a fresh A4 page of a PdfWriter."""
+    w = PdfWriter(path)
+    for draw in pages:
+        w.new_page()
+        draw(w)
+    w.save()
+    return path
+
+
+def one_page(path: Path, draw):
+    """(doc, page) for a one-page PDF; close the doc when done."""
+    doc = open_pdf(write_pdf(path, draw))
+    return doc, doc.page(0)
+
+
+def _text_page(title: str):
+    def draw(w: PdfWriter) -> None:
+        w.text(72, 80, title, size=20)
+        assert w.textbox((72, 110, 520, 700), BODY, size=10) == 0
+    return draw
+
+
+def _table_page(w: PdfWriter) -> None:
+    w.text(72, 60, "Quarterly results", size=20)
     x0, y0, cw, rh, rows, cols = 72, 100, 110, 40, 12, 4
     for r in range(rows + 1):
-        page.draw_line((x0, y0 + r * rh), (x0 + cols * cw, y0 + r * rh))
+        w.line((x0, y0 + r * rh), (x0 + cols * cw, y0 + r * rh))
     for c in range(cols + 1):
-        page.draw_line((x0 + c * cw, y0), (x0 + c * cw, y0 + rows * rh))
+        w.line((x0 + c * cw, y0), (x0 + c * cw, y0 + rows * rh))
     for r in range(rows):
         for c in range(cols):
-            page.insert_text((x0 + c * cw + 6, y0 + r * rh + 24), f"r{r}c{c}", fontsize=9)
+            w.text(x0 + c * cw + 6, y0 + r * rh + 24, f"r{r}c{c}", size=9)
 
 
-def _diagram_page(doc: pymupdf.Document) -> None:
-    page = doc.new_page()
+def _diagram_page(w: PdfWriter) -> None:
     for i in range(160):
         x, y = 60 + (i % 16) * 30, 100 + (i // 16) * 50
-        page.draw_rect(pymupdf.Rect(x, y, x + 20, y + 20))
-    page.insert_text((72, 700), "Block diagram", fontsize=10)
+        w.rect((x, y, x + 20, y + 20))
+    w.text(72, 700, "Block diagram", size=10)
 
 
-def _scanned_page(doc: pymupdf.Document) -> None:
-    page = doc.new_page()
-    pix = pymupdf.Pixmap(pymupdf.csRGB, pymupdf.IRect(0, 0, 300, 400), 0)
-    pix.set_rect(pix.irect, (230, 230, 230))
-    page.insert_image(page.rect, pixmap=pix)
+def _scanned_page(w: PdfWriter) -> None:
+    w.image((0, 0, *w.size), Image.new("RGB", (300, 400), (230, 230, 230)))
 
 
-def gray_pixmap(w: int, h: int) -> pymupdf.Pixmap:
-    pix = pymupdf.Pixmap(pymupdf.csRGB, pymupdf.IRect(0, 0, w, h), 0)
-    pix.set_rect(pix.irect, (200, 210, 220))
-    return pix
+FIGURE_RECT = (72, 380, 420, 600)
 
 
-FIGURE_RECT = pymupdf.Rect(72, 380, 420, 600)
-
-
-def _figure_page(doc: pymupdf.Document) -> None:
+def _figure_page(w: PdfWriter) -> None:
     """Text page with an embedded figure and a caption right below it."""
-    page = doc.new_page()
-    page.insert_text((72, 80), "3. Architecture", fontsize=20)
-    page.insert_textbox(pymupdf.Rect(72, 110, 520, 370), BODY, fontsize=10, fontname="korea")
-    page.insert_image(FIGURE_RECT, pixmap=gray_pixmap(348, 220))
-    page.insert_text((72, 620), "그림 1. 시스템 구성도", fontsize=9, fontname="korea")
+    w.text(72, 80, "3. Architecture", size=20)
+    assert w.textbox((72, 110, 520, 370), BODY, size=10) == 0
+    w.image(FIGURE_RECT, gray_image(348, 220))
+    w.text(72, 620, "그림 1. 시스템 구성도", size=9)
 
 
 @pytest.fixture
 def sample_pdf(tmp_path: Path) -> Path:
     """Pages: 0 text, 1 text, 2 table, 3 diagram, 4 scanned, 5 text with figure + caption."""
-    doc = pymupdf.open()
-    _text_page(doc, "1. Introduction")
-    _text_page(doc, "2. Method")
-    _table_page(doc)
-    _diagram_page(doc)
-    _scanned_page(doc)
-    _figure_page(doc)
-    path = tmp_path / "sample.pdf"
-    doc.save(path)
-    doc.close()
-    return path
+    return write_pdf(tmp_path / "sample.pdf", _text_page("1. Introduction"), _text_page("2. Method"),
+                     _table_page, _diagram_page, _scanned_page, _figure_page)

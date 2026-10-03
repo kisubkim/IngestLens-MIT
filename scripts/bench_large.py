@@ -15,9 +15,11 @@ import threading
 import time
 from pathlib import Path
 
+import io
+
 import psutil
-import pymupdf
 import yaml
+from PIL import Image
 
 ROOT = Path(__file__).resolve().parents[1]
 BODY = ("대용량 문서 처리 성능을 측정하기 위한 본문입니다. Retrieval augmented generation pipeline benchmark text. " * 5).strip()
@@ -25,29 +27,32 @@ BODY = ("대용량 문서 처리 성능을 측정하기 위한 본문입니다. 
 
 def noise_jpeg(w: int, h: int) -> bytes:
     # Random pixels barely compress, so file size is predictable.
-    return pymupdf.Pixmap(pymupdf.csRGB, w, h, os.urandom(w * h * 3), 0).tobytes("jpeg", jpg_quality=90)
+    buf = io.BytesIO()
+    Image.frombytes("RGB", (w, h), os.urandom(w * h * 3)).save(buf, "JPEG", quality=90)
+    return buf.getvalue()
 
 
 def make_pdf(path: Path, pages: int, target_mb: float) -> None:
     images_per_cycle = 2  # figure page + scanned page
     n_images = max(1, pages // 3 * images_per_cycle)
     img_bytes = target_mb * 2**20 / n_images
-    # Noise JPEG at quality 90 is ~2.3 bytes per pixel; size the images to hit the target.
-    side = int((img_bytes / 2.3 / 1.4) ** 0.5)
-    doc = pymupdf.open()
+    # Pillow noise JPEG at quality 90 is ~1.57 bytes per pixel; size the images to hit the target.
+    side = int((img_bytes / 1.57 / 1.4) ** 0.5)
+    from app.tools.pdfgen import PdfWriter
+
+    w = PdfWriter(path)
     for i in range(pages):
-        page = doc.new_page()
+        w.new_page()
         kind = i % 3
         if kind in (0, 1):
-            page.insert_text((72, 80), f"{i + 1}. 섹션 {i + 1}", fontsize=18, fontname="korea")
-            page.insert_textbox(pymupdf.Rect(72, 110, 520, 360), BODY, fontsize=10, fontname="korea")
+            w.text(72, 80, f"{i + 1}. 섹션 {i + 1}", size=18)
+            assert w.textbox((72, 110, 520, 360), BODY, size=10) == 0
         if kind == 1:
-            page.insert_image(pymupdf.Rect(72, 380, 420, 600), stream=noise_jpeg(side, int(side * 1.4)))  # unique: PyMuPDF dedupes identical streams
-            page.insert_text((72, 620), f"그림 {i + 1}. 측정 장비 구성", fontsize=9, fontname="korea")
+            w.image((72, 380, 420, 600), noise_jpeg(side, int(side * 1.4)))  # unique: ReportLab stores identical images once
+            w.text(72, 620, f"그림 {i + 1}. 측정 장비 구성", size=9)
         if kind == 2:
-            page.insert_image(page.rect, stream=noise_jpeg(side, int(side * 1.4)))  # unique: PyMuPDF dedupes identical streams
-    doc.save(path, garbage=0, deflate=True)
-    doc.close()
+            w.image((0, 0, *w.size), noise_jpeg(side, int(side * 1.4)))
+    w.save()
 
 
 class PeakRSS(threading.Thread):
@@ -110,12 +115,6 @@ def main() -> None:
 
     work = Path(a.workdir or tempfile.mkdtemp(prefix="rag-bench-"))
     work.mkdir(parents=True, exist_ok=True)
-    pdf = work / f"bench_{a.pages}p_{int(a.mb)}mb.pdf"
-    if not pdf.exists():
-        t0 = time.perf_counter()
-        make_pdf(pdf, a.pages, a.mb)
-        print(f"generated {pdf.name}: {pdf.stat().st_size / 2**20:.1f} MB in {time.perf_counter() - t0:.1f}s")
-
     models = yaml.safe_load((ROOT / "config" / "models.yaml").read_text(encoding="utf-8"))
     models["vlm"]["base_url"] = a.vlm_url
     models["vlm"]["model"] = "mock-vl" if a.vlm_url else models["vlm"]["model"]
@@ -123,7 +122,13 @@ def main() -> None:
     models_file.write_text(yaml.safe_dump(models, allow_unicode=True), encoding="utf-8")
     os.environ["RAG_DATA_DIR"] = str(work / "data")
     os.environ["RAG_MODELS_FILE"] = str(models_file)
-    sys.path.insert(0, str(ROOT / "backend"))
+    sys.path.insert(0, str(ROOT / "backend"))  # app settings are read at import: only after the env above is set
+
+    pdf = work / f"bench_{a.pages}p_{int(a.mb)}mb.pdf"
+    if not pdf.exists():
+        t0 = time.perf_counter()
+        make_pdf(pdf, a.pages, a.mb)
+        print(f"generated {pdf.name}: {pdf.stat().st_size / 2**20:.1f} MB in {time.perf_counter() - t0:.1f}s")
 
     mon = PeakRSS()
     mon.start()

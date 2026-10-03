@@ -1,10 +1,11 @@
 import asyncio
 import time
 
-import pymupdf
 from fastapi.testclient import TestClient
 
 from app.main import app
+
+from .conftest import write_pdf
 
 
 def _wait(client: TestClient, run_id: str, timeout: float = 60) -> dict:
@@ -18,12 +19,7 @@ def _wait(client: TestClient, run_id: str, timeout: float = 60) -> dict:
 
 
 def test_upload_batch(tmp_path, sample_pdf):
-    other = tmp_path / "other.pdf"
-    doc = pymupdf.open()
-    page = doc.new_page()
-    page.insert_text((72, 80), "second file")
-    doc.save(other)
-    doc.close()
+    other = write_pdf(tmp_path / "other.pdf", lambda w: w.text(72, 80, "second file"))
 
     with TestClient(app) as client:
         with sample_pdf.open("rb") as a, other.open("rb") as b:
@@ -55,11 +51,7 @@ def test_upload_batch(tmp_path, sample_pdf):
 
 
 def test_batch_runs_execute_in_order(tmp_path, sample_pdf):
-    other = tmp_path / "queued.pdf"
-    doc = pymupdf.open()
-    doc.new_page().insert_text((72, 80), "queued file")
-    doc.save(other)
-    doc.close()
+    other = write_pdf(tmp_path / "queued.pdf", lambda w: w.text(72, 80, "queued file"))
 
     with TestClient(app) as client:
         with sample_pdf.open("rb") as a, other.open("rb") as b:
@@ -187,7 +179,7 @@ def test_vlm_parsers_with_mock(sample_pdf, monkeypatch):
             doc = client.post("/api/documents", files={"file": ("sample.pdf", f, "application/pdf")}).json()
         run = _wait(client, client.post(f"/api/documents/{doc['id']}/runs").json()["id"])
         assert run["status"] == "succeeded", run["error"]
-        assert run["summary"]["plan"]["parser_usage"] == {"pymupdf_text": 3, "pymupdf_tables": 1, "vlm_figures": 1, "vlm_ocr": 1}
+        assert run["summary"]["plan"]["parser_usage"] == {"native_text": 3, "native_tables": 1, "vlm_figures": 1, "vlm_ocr": 1}
         parse = run["summary"]["parse"]
         assert parse["vlm_errors"] == 0 and parse["figures_described"] == 2 and parse["pages_relabeled"] == 1
 

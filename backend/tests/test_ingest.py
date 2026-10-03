@@ -5,6 +5,7 @@ from fastapi.testclient import TestClient
 from app.config import settings
 from app.main import app
 
+from .conftest import write_pdf
 from .test_pipeline import _wait
 
 
@@ -43,13 +44,7 @@ def test_openwebui_loader_returns_chunks(sample_pdf):
 
 
 def test_openwebui_loader_extension_from_content_type(tmp_path):
-    import pymupdf
-
-    pdf = tmp_path / "noext.pdf"
-    doc = pymupdf.open()
-    doc.new_page().insert_text((72, 80), "file sent without an extension")
-    doc.save(pdf)
-    doc.close()
+    pdf = write_pdf(tmp_path / "noext.pdf", lambda w: w.text(72, 80, "file sent without an extension"))
     with TestClient(app) as client:
         res = client.put(
             "/api/openwebui/process",

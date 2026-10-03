@@ -30,18 +30,18 @@ profiler:
 
 strategy:
   # Page label -> parser. VLM parsers fall back to `fallback` when the VLM is not configured.
-  #   pymupdf_text / pymupdf_tables: native text (+ ruled tables when the page has drawings)
+  #   native_text / native_tables: text layer (+ ruled tables when the page has drawings)
   #   vlm_ocr: whole page transcribed to Markdown (no usable text layer)
   #   vlm_figures: native text + every figure region described by the VLM (whole page if none found)
   parsers:
-    text: pymupdf_text
-    mixed: pymupdf_text
-    table: pymupdf_tables
+    text: native_text
+    mixed: native_text
+    table: native_tables
     scanned: vlm_ocr
     image_heavy: vlm_figures
     diagram: vlm_figures
     chart: vlm_figures
-  fallback: pymupdf_text
+  fallback: native_text
   heading_size_ratio: 1.15      # span size >= body size * ratio counts as heading
   section_min_page_ratio: 0.15  # pages with headings / total pages to choose section chunking
   target_tokens: 512
@@ -50,7 +50,7 @@ strategy:
 
 parse:
   window_pages: 10          # pages prepared per worker call; bounds memory on large documents
-  workers: 4                # processes preparing windows (PyMuPDF holds the GIL); 0 = one thread, for debugging
+  workers: 4                # processes preparing windows (pdfminer is pure Python); 0 = one thread, for debugging
   windows_in_flight: 6      # > workers so VLM calls of finished windows overlap with preparation of the next
   figures:
     enrich_native_pages: true   # also describe figures found on text/table pages

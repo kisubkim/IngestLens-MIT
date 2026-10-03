@@ -3,13 +3,13 @@
 import io
 from pathlib import Path
 
-import pymupdf
+from PIL import Image
 
 
 def _png(w: int = 120, h: int = 80) -> bytes:
-    pix = pymupdf.Pixmap(pymupdf.csRGB, pymupdf.IRect(0, 0, w, h), 0)
-    pix.set_rect(pix.irect, (120, 160, 220))
-    return pix.tobytes("png")
+    buf = io.BytesIO()
+    Image.new("RGB", (w, h), (120, 160, 220)).save(buf, "PNG")
+    return buf.getvalue()
 
 
 def make_docx(path: Path) -> Path:

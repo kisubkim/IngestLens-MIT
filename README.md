@@ -10,7 +10,7 @@ Explainable RAG document ingestion: parse, chunk, embed — with the evidence be
 - 계획: `docs/PLAN.md`
 - 이어서 작업할 때 필요한 내용(상태, 반입 절차, 백로그, 함정): **`docs/HANDOFF.md`**
 - 평가와 튜닝: `evals/README.md`
-- 라이선스: AGPL-3.0 (`LICENSE`). 의존성과 모델의 라이선스는 `NOTICE.md`
+- 라이선스: MIT (`LICENSE`). 의존성과 모델의 라이선스는 `NOTICE.md`. v1.0.0(AGPL-3.0)에서 쓰던 PyMuPDF를 pdfplumber/pdfminer.six, pypdfium2, ReportLab으로 바꿨다
 
 ## 실행 (개발)
 
@@ -40,6 +40,7 @@ UI 개발: `cd frontend && npm run dev`. `/api`는 `127.0.0.1:8000`으로 proxy�
 | `RAG_DB_URL` | SQLite | 예: `postgresql+psycopg://...` |
 | `RAG_QDRANT_URL` | 내장 모드 | 예: `http://qdrant:6333` |
 | `RAG_SOFFICE_PATH` | PATH 검색 | Office 문서를 PDF로 변환할 LibreOffice 경로. 없으면 docx/pptx/xlsx는 자체 렌더링한다 |
+| `RAG_CJK_FONT` | 시스템 검색 | 자체 렌더링(Office, 이미지)이 PDF에 넣을 한글 TrueType 폰트 경로. 비우면 맑은 고딕, 나눔고딕 등을 찾고, 없으면 포함하지 않는 CID 폰트를 쓴다 |
 | `RAG_MODELS_FILE` | `config/models.yaml` | 다른 모델 설정 파일을 쓸 때 (예: mock 서버용) |
 | `RAG_API_KEY` | 없음 | 수집 API(`/api/ingest`, `/api/openwebui/process`)와 저장 위치 변경의 Bearer 키. 비어 있으면 수집 API는 인증하지 않고, 저장 위치 변경은 서버 PC에서 접속했을 때만 허용한다. 그 밖의 화면용 API에는 적용하지 않는다 |
 | `RAG_SETTINGS_FILE` | `config/settings.local.yaml` | 저장 위치 설정 화면이 쓰는 파일. git에 올라가지 않는다 |
@@ -73,7 +74,7 @@ cd backend && ../.venv/Scripts/python -m pytest -q
 |---|---|
 | PDF | 그대로 처리 |
 | 이미지 (png/jpg/tif) | 1페이지 PDF로 감싸서 처리 |
-| docx / pptx | LibreOffice가 있으면 LibreOffice로 PDF 변환하고, 없으면 자체 렌더링(python-docx/pptx → HTML → PDF). 두 경우 모두 원본에서 헤딩, 슬라이드 제목, 발표자 노트, PPT 차트 데이터를 추가로 추출한다 |
+| docx / pptx | LibreOffice가 있으면 LibreOffice로 PDF 변환하고, 없으면 자체 렌더링(python-docx/pptx → ReportLab → PDF). 두 경우 모두 원본에서 헤딩, 슬라이드 제목, 발표자 노트, PPT 차트 데이터를 추가로 추출한다 |
 | xlsx | 기본은 자체 렌더링. 시트를 24행 단위 표로 나누고 헤더를 반복한다 (`office.xlsx`) |
 | doc / ppt / hwp 등 | LibreOffice 필요 |
 
@@ -121,12 +122,12 @@ mock 서버는 prompt 규약(OCR, 그림 `TYPE:` 첫 줄, 표, 분류)에 맞는
 
 `--mb`는 생성할 이미지 총량이다. 207을 주면 약 150MB PDF가 만들어진다. 출력은 단계별 시간, VLM 호출 통계, 최대 메모리(worker 포함)다.
 
-참고 측정값 (12코어 PC, mock VLM latency 0.3s, 동시 4개, `parse.workers: 4`). 150MB, 300페이지(텍스트 100, 텍스트+그림 100, 스캔 100)를 처리했다.
+참고 측정값 (12코어 PC, mock VLM latency 0.3s, 동시 4개, `parse.workers: 4`, 2026-10-04, pdfplumber/pypdfium2). 149MB, 300페이지(텍스트 100, 텍스트+그림 100, 스캔 100)를 처리했다.
 
 | 조건 | 전체 | 파싱 | 최대 메모리 |
 |---|---|---|---|
-| VLM 사용 (호출 200회) | 28.9s | 20.9s | 1.1GB |
-| VLM 없음 | 5.6s | 1.6s | 0.6GB |
+| VLM 사용 (호출 200회) | 27.2s | 18.0s | 0.8GB |
+| VLM 없음 | 8.3s | 1.9s | 0.75GB |
 
 실제 VLM에서는 호출 1회의 latency가 전체 시간을 결정한다. 대략 `호출 수 × latency / max_concurrency`다.
 

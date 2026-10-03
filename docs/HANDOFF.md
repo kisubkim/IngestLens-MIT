@@ -1,6 +1,6 @@
 # HANDOFF: 다른 환경에서 이어서 개선하기 위한 문서
 
-최종 갱신: 2026-10-03. 이 문서는 현재 상태, 새 환경 준비, 실제 모델 연결 절차, 튜닝 방법, 남은 일, 개발 중 겪은 함정을 정리한다.
+최종 갱신: 2026-10-04. 이 문서는 현재 상태, 새 환경 준비, 실제 모델 연결 절차, 튜닝 방법, 남은 일, 개발 중 겪은 함정을 정리한다.
 원래 계획은 `docs/PLAN.md`, 평가 방법은 `evals/README.md`에 있다.
 
 ---
@@ -19,6 +19,7 @@
 | M4 Office | 완료 | LibreOffice 경로와 자체 렌더링 경로, 헤딩·노트·차트 데이터 힌트, 시트 표 헤더 반복 |
 | M5 결과 화면 | 완료 | 청크, 임베딩(PCA, 이웃), 검색(dense/BM25/hybrid, rerank, 단계별 점수) |
 | M6 튜닝 | 도구만 완료 | 평가 스크립트, 합성 세트, `/tokenize` 토큰 보정, `table_text_share` 규칙. 실제 데이터 튜닝은 남음 |
+| MIT 전환 | 완료 | PyMuPDF(AGPL)를 pdfplumber/pdfminer.six(읽기), pypdfium2(렌더), ReportLab(쓰기)로 교체. 파서 id `pymupdf_*` → `native_*` |
 
 ### 검증 수준: 이어받는 사람이 가장 먼저 알아야 할 것
 
@@ -30,6 +31,7 @@
 | reranker, `/tokenize` | mock HTTP | 실제 vLLM으로 검증 안 함 |
 | LibreOffice 변환 | 가짜 변환 함수(테스트) | **LibreOffice로 실제 변환해 본 적 없음** (개발 PC에 미설치) |
 | Office 자체 렌더링 | 생성한 docx/pptx/xlsx | 실제 문서로 검증 안 함 |
+| PDF 라이브러리 교체(MIT 전환) | 테스트 46개, 같은 합성 PDF에서 PyMuPDF 결과와 feature·라벨 비교(라벨 전부 일치), 합성 세트 평가, 벤치마크, 8010 포트 서버로 6개 형식 수집 | **실제 문서(다단, 회전 페이지, 폰트가 특이한 PDF)로 비교한 적 없음** |
 | 150MB 대용량 | 합성 PDF (노이즈 이미지) + mock VLM | 실제 문서, 실제 VLM으로 측정 안 함 |
 | Linux(운영 서버) | 없음 | **Windows에서만 실행해 봄** |
 
@@ -43,7 +45,7 @@ IngestLens/
     agents/     intake, profiler, strategy, parser, chunker, embedder, retriever (+ common)
     graph/      pipeline.py: LangGraph 정의, 실행/취소
     api/        documents, runs(이벤트·SSE·결정·페이지·요소·청크·임베딩·이웃), search, ingest(외부 수집·Open WebUI 로더), settings(저장 위치), auth
-    tools/      pdf, figures, office, office_native, vlm, vlm_output, embedding, reranker, lexical, chunking, vectorstore
+    tools/      pdf(읽기·렌더), pdfgen(쓰기·한글 폰트), figures, office, office_native, vlm, vlm_output, embedding, reranker, lexical, chunking, vectorstore
     models.py   Document, Run, Event, Decision, PageProfile, Element, Chunk
     events.py   emit_event / record_decision + SSE fan-out
   backend/tests/   pytest 46개 (conftest의 합성 PDF, office_fixtures)
@@ -91,7 +93,7 @@ cd backend && ../.venv/bin/python -m uvicorn app.main:app --host 0.0.0.0 --port 
 ```
 
 - **LibreOffice(선택)**: 없어도 docx/pptx/xlsx는 자체 렌더링으로 처리된다. doc/ppt/hwp를 처리하거나 원본 레이아웃이 필요할 때만 설치한다. 설치 후 `RAG_SOFFICE_PATH`를 지정하거나 PATH에 추가한다.
-- **한글 폰트**: 자체 렌더링은 PyMuPDF 내장 CJK 폰트를 쓰므로 필요 없다. LibreOffice를 쓴다면 서버에 한글 폰트(나눔 등)를 설치해야 변환 결과가 깨지지 않는다.
+- **한글 폰트**: 자체 렌더링(Office, 합성 문서)은 서버의 TrueType 한글 폰트를 PDF에 넣는다. Linux에는 나눔고딕을 설치하거나(`fonts-nanum`, `/usr/share/fonts/truetype/nanum/NanumGothic.ttf`) `RAG_CJK_FONT`로 `.ttf` 경로를 지정한다. Noto Sans CJK 같은 CFF 기반 `.otf`는 ReportLab이 넣지 못한다. 폰트가 없으면 포함하지 않는 CID 폰트로 대신하고 "office font" 결정과 경고를 남긴다. 이 경우 텍스트 추출은 되지만 페이지 이미지(화면, VLM 입력)에서 한글이 보이지 않을 수 있다. LibreOffice를 쓸 때도 한글 폰트가 있어야 변환 결과가 깨지지 않는다.
 - **데이터 위치**: `RAG_DATA_DIR`(기본 `./data`)에 업로드 원본, 변환 PDF, 페이지 이미지 캐시, SQLite, 내장 Qdrant가 저장된다. 백업 대상이다.
 - **확인 필요**: Linux에서 실행해 본 적이 없다. 두 가지를 확인한다.
   - `ProcessPoolExecutor`: Linux 기본값인 fork 방식에서 문제없는지
@@ -201,6 +203,8 @@ Open WebUI 서버에서 이 서버의 포트(기본 8000)에 접속할 수 있�
 - [ ] Linux에서 실행을 확인한다(프로세스 풀, 경로, 권한).
 - [ ] **인증과 접근 제어**가 없다. 내부 네트워크에서만 쓰더라도 접속할 수 있는 누구나 업로드, 조회, 검색할 수 있다. 배포 전에 최소한 SSO나 reverse proxy 인증을 붙인다.
 - [ ] Open WebUI 연동(`PUT /api/openwebui/process`)을 실제 Open WebUI로 검증한다. 규약은 Open WebUI 소스(`retrieval/loaders/external_document.py`)를 보고 맞췄고 테스트는 TestClient로만 했다. 로더는 실행이 끝날 때까지 응답을 잡고 있으므로, 큰 문서에서 Open WebUI 쪽 요청 timeout과 reverse proxy timeout을 확인한다.
+- [ ] PDF 라이브러리 교체(MIT 전환)를 실제 문서로 검증한다. 같은 문서를 v1.0.0(PyMuPDF)과 이 버전으로 처리해 페이지 라벨, 요소, 표, 그림 영역을 비교한다. 특히 다단 문서의 읽기 순서, 회전 페이지, 괘선 표, 벡터 그림이 많은 페이지(`drawings` 수가 PyMuPDF와 다르게 셀 수 있음)를 본다. 차이가 크면 `strategy_rules.yaml`의 `min_drawings`를 `eval_profile.py --sweep`으로 다시 맞춘다.
+- [ ] Linux 서버에 한글 TrueType 폰트를 설치했는지, intake의 "office font" 결정이 `font_system`이나 `font_configured`인지 확인한다.
 - [ ] LibreOffice를 쓴다면 실제 변환을 검증한다. 한글 폰트, 슬라이드 1장 = 1페이지인지(노트 페이지 출력 옵션이 꺼져 있는지) 확인한다.
 
 **P1: 품질**
@@ -228,6 +232,10 @@ Open WebUI 서버에서 이 서버의 포트(기본 8000)에 접속할 수 있�
 | 2026-09-30 | 같은 PDF, VLM 없음 | 전체 5.6s, 최대 0.6GB | |
 | 2026-09-30 | 합성 세트 페이지 분류(12p) | 91.7% → 100% | `table_text_share` 규칙 추가 후 |
 | 2026-09-30 | 합성 세트 검색 22문항, dev-hash | hybrid hit@1 82% (lexical 93%, paraphrase 62%) | 실제 임베딩 연결 후 비교 기준 |
+| 2026-10-04 | MIT 전환 후, 149MB/300p 합성 PDF, mock VLM 0.3s, 동시 4, workers 4 | 전체 27.2s, 파싱 18.0s, 최대 0.81GB | VLM 200회, 오류 0. pdfplumber/pypdfium2 |
+| 2026-10-04 | MIT 전환 후, 같은 PDF, VLM 없음 | 전체 8.3s(분석 2.1s, 파싱 1.9s), 최대 0.75GB | PyMuPDF보다 2.7s 느림. pdfminer가 순수 Python이라 분석 단계가 느려짐 |
+| 2026-10-04 | MIT 전환 후, 합성 세트 페이지 분류(12p) | 100% | PyMuPDF와 같은 합성 PDF에서 라벨 전부 일치 |
+| 2026-10-04 | MIT 전환 후, 합성 세트 검색 22문항, dev-hash | hybrid hit@1 86% (lexical 100%, paraphrase 62%), dense hit@5 86% | 청크 수 동일. dev-hash라 차이는 의미가 작다 |
 
 ---
 
@@ -237,7 +245,8 @@ Open WebUI 서버에서 이 서버의 포트(기본 8000)에 접속할 수 있�
 |---|---|---|
 | 모든 형식을 PDF 페이지로 통일 | 분석, 파싱, 위치 표시, 화면을 한 가지 방식으로 처리 | 페이지 개념이 없는 형식(긴 HTML 등)을 주로 다룰 때 |
 | 규칙이 먼저 분류하고 VLM은 애매한 페이지만 | 속도와 부하, 근거 설명 가능성 | VLM이 충분히 빠르고 규칙 정확도가 낮을 때 |
-| 파싱 준비는 프로세스 풀 | PyMuPDF가 GIL을 잡음(측정으로 확인) | 메모리가 부족하면 `parse.workers`를 줄인다 |
+| 파싱 준비는 프로세스 풀 | pdfminer는 순수 Python이고 PDFium은 프로세스당 한 번에 하나만 렌더한다(PyMuPDF 시절에는 GIL을 잡는 것을 측정으로 확인) | 메모리가 부족하면 `parse.workers`를 줄인다 |
+| PDF 처리는 pdfplumber/pdfminer.six + pypdfium2 + ReportLab | MIT로 배포하려면 AGPL인 PyMuPDF를 쓸 수 없다. 모두 퍼미시브이고 wheel만으로 오프라인 설치된다 | 분석 속도가 문제되면 pypdfium2 텍스트 API로 글자를 읽고 블록 묶기를 직접 구현한다 |
 | Redis/arq 대신 서버 안 asyncio 작업 | 서버 1대면 충분하고 반입할 구성요소가 적음 | 여러 인스턴스, 재시작 후 이어서 실행이 필요할 때 |
 | SQLite + 내장 Qdrant 기본 | 설치 없이 동작 | 동시 사용자 증가, 이중화 |
 | BM25(한글 bigram) + RRF, sparse 벡터 안 씀 | 형태소 분석기와 모델 의존성 없이 오프라인 환경에서 동작 | bge-m3 sparse 출력을 vLLM에서 쓸 수 있게 되면 |
@@ -249,15 +258,18 @@ Open WebUI 서버에서 이 서버의 포트(기본 8000)에 접속할 수 있�
 
 ## 9. 개발 중 겪은 함정
 
-- **PyMuPDF와 GIL**: 스레드로 페이지를 렌더링하면 실제로는 순차 실행된다. 프로세스를 써야 한다.
-- **PyMuPDF는 같은 이미지 스트림을 한 번만 저장한다**: 같은 이미지를 반복 삽입한 벤치마크 PDF가 150MB가 아니라 2.4MB였다. 측정 도구의 결과도 확인해야 한다.
-- **`insert_textbox`는 넘치면 아무것도 쓰지 않는다**(반환값 < 0). 합성 문서를 만들 때 반환값을 확인한다.
-- **MuPDF는 제목 줄을 바로 위 문단 블록에 붙인다**: `extract_text_elements`가 글자 크기 전환 지점에서 블록을 나눈다.
+- **스레드로는 페이지 준비가 병렬이 되지 않는다**: pdfminer는 순수 Python이고(GIL), PDFium은 스레드 안전하지 않아 `tools/pdf.py`가 프로세스 안의 모든 렌더를 lock으로 묶는다. 병렬은 프로세스로 한다. (PyMuPDF 시절에도 GIL 때문에 같았다.)
+- **PDF 작성기는 같은 이미지를 한 번만 저장한다**(PyMuPDF, ReportLab 모두): 같은 이미지를 반복 삽입한 벤치마크 PDF가 150MB가 아니라 2.4MB였다. 그래서 벤치마크는 페이지마다 다른 노이즈 이미지를 넣는다. 측정 도구의 결과도 확인해야 한다.
+- **`PdfWriter.textbox`는 넘치면 아무것도 쓰지 않는다**(넘친 줄 수를 반환). 합성 문서를 만들 때 반환값이 0인지 확인한다.
+- **레이아웃 분석은 제목 줄을 옆 문단 블록에 붙이기도 한다**: `extract_text_elements`가 글자 크기 전환 지점에서 블록을 나눈다. pdfminer는 표 셀을 각각 별도 블록으로 나누므로 표 페이지의 텍스트 블록 수가 PyMuPDF보다 많다(표 안 텍스트는 파서가 버리므로 결과는 같다).
+- **좌표계**: 모든 bbox는 crop box 기준, 회전(/Rotate) 적용 후의 좌상단 원점 좌표다. PDFium 렌더 이미지와 같은 공간이다. pdfminer 객체를 직접 다룰 때는 `Page._box()`를 거친다. PyMuPDF는 회전 페이지에서 텍스트 좌표를 회전 전 기준으로 줘서 오버레이가 어긋났다. 반대로, 회전한 결과 화면에서 세로로 놓이는 글은 pdfminer가 한 글자씩 줄로 나눈다(`detect_vertical`은 끈 상태).
+- **pdfplumber 표 찾기는 사각형 하나도 1×1 표로 잡는다**: 다이어그램의 상자가 표가 되지 않도록 2행 2열 미만은 버린다(`Page.tables()`).
+- **ReportLab은 TrueType(`glyf`) 폰트만 넣을 수 있다**: CFF 기반 `.otf`(Noto Sans CJK 등)는 등록에 실패하므로 다음 후보로 넘어간다. 실패한 파일은 "office font" 결정의 `rejected_files`에 남는다.
+- **스크립트에서 app을 import하는 순서**: 설정은 import 시점에 읽힌다. `bench_large.py`가 PDF 생성용으로 `app.tools.pdfgen`을 먼저 import했다가 `RAG_DATA_DIR`/`RAG_MODELS_FILE`이 무시되어 저장소의 `data/`에 기록하고 VLM이 꺼진 채로 측정된 적이 있다. 환경 변수를 먼저 설정한다.
 - **SQLite는 timezone을 저장하지 않는다**: `to_dict`에서 UTC로 붙인다. 화면 캡처에서 9시간 차이로 발견했다.
 - **내장 Qdrant는 경로당 client 하나만 허용**한다. 항상 `vectorstore.client()`를 쓴다.
 - **저장 위치 설정은 재시작해야 적용된다**: DB engine과 Qdrant client를 import 시점에 만든다. 설정 파일(`RAG_SETTINGS_FILE`)은 환경 변수와 `.env`보다 우선순위가 낮다. 그래서 `RAG_DATA_DIR`을 환경 변수로 주면 화면에서는 잠긴다.
 - **파일 경로는 데이터 폴더 기준 상대 경로로 저장한다**(`settings.stored_path` / `settings.resolve`). 새 코드에서 `Document.path`나 `pdf_path`를 읽을 때 `Path(...)`로 바로 열지 말고 `settings.resolve()`를 거친다.
-- **`pymupdf.css_for_pymupdf_font`는 `pymupdf-fonts` 패키지가 필요**하다. 그래서 내장 폰트 버퍼(`pymupdf.Font("korea").buffer`)를 archive에 직접 넣는다.
 - **asyncio Semaphore는 이벤트 루프에 묶인다**: TestClient는 테스트마다 새 루프를 쓰므로 VLM semaphore를 루프별로 만든다.
 - **Windows bash heredoc**: Python 코드 안의 `\n`, 바이트 이스케이프, 한글이 깨질 수 있다. 코드 수정은 편집 도구를 쓴다.
 - **Windows에서 서버를 강제 종료하면 exit 255**가 보인다. 정상이다.

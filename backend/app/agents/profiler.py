@@ -3,14 +3,13 @@
 import asyncio
 from collections import Counter
 
-import pymupdf
 from sqlalchemy import select
 
 from ..config import rules_cfg
 from ..db import session
 from ..events import emit_event, record_decision
 from ..models import PageProfile
-from ..tools.pdf import classify, page_features, render_png
+from ..tools.pdf import classify, open_pdf, page_features
 from ..tools.vlm import VLMClient
 from .common import PipelineState, update_summary
 
@@ -20,9 +19,10 @@ LABELS = {"text", "scanned", "table", "diagram", "chart", "image_heavy", "mixed"
 
 def _profile_batch(run_id: str, pdf_path: str, start: int, end: int, rules: dict) -> list[tuple[int, str, float]]:
     rows = []
-    with pymupdf.open(pdf_path) as doc:
+    with open_pdf(pdf_path) as doc:
         for i in range(start, end):
-            f = page_features(doc[i])
+            with doc.page(i) as pg:
+                f = page_features(pg)
             c = classify(f, rules)
             f["evidence"] = {"conditions": c["conditions"], "evaluated": c["evaluated"]}
             rows.append(PageProfile(run_id=run_id, page=i, label=c["label"], rule_id=c["rule_id"], confidence=c["confidence"], features=f))
@@ -32,8 +32,8 @@ def _profile_batch(run_id: str, pdf_path: str, start: int, end: int, rules: dict
 
 
 def _render(pdf_path: str, page: int, dpi: int) -> bytes:
-    with pymupdf.open(pdf_path) as doc:
-        return render_png(doc[page], dpi)
+    with open_pdf(pdf_path) as doc:
+        return doc.render(page, dpi)
 
 
 async def _vlm_review(run_id: str, pdf_path: str, pages: list[tuple[int, str, float]], vlm: VLMClient) -> None:

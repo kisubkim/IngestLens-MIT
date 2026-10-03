@@ -3,7 +3,6 @@
 import asyncio
 from collections import Counter
 
-import pymupdf
 from sqlalchemy import select
 
 from ..config import models_cfg, rules_cfg
@@ -12,7 +11,7 @@ from ..events import record_decision
 from ..models import PageProfile
 from ..tools.chunking import CHARS_PER_TOKEN
 from ..tools.embedding import count_tokens
-from ..tools.pdf import body_font_size
+from ..tools.pdf import body_font_size, open_pdf
 from ..tools.vlm import VLMClient
 from .common import PipelineState, update_summary
 
@@ -104,9 +103,9 @@ async def strategy(state: PipelineState) -> dict:
 
 def _sample_text(pdf_path: str, limit: int = 6000) -> str:
     out, n = [], 0
-    with pymupdf.open(pdf_path) as doc:
-        for page in doc:
-            t = page.get_text().strip()
+    with open_pdf(pdf_path) as doc:
+        for page in doc.pages():
+            t = page.text().strip()
             if t:
                 out.append(t)
                 n += len(t)

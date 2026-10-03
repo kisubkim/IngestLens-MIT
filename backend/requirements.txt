@@ -4,7 +4,11 @@ sse-starlette==3.5.0
 python-multipart==0.0.32
 pydantic-settings==2.15.0
 SQLAlchemy==2.1.1
-pymupdf==1.28.2
+pypdfium2==5.13.0
+pdfplumber==0.11.10
+pdfminer.six==20260107
+reportlab==5.0.1
+pillow==12.3.0
 langgraph==1.2.12
 qdrant-client==1.19.1
 openai==3.22.1

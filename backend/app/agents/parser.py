@@ -2,7 +2,8 @@
 
 Pages are processed in windows. A worker process prepares a window (native text and tables, figure
 regions, rendered crops), then the window's VLM calls run concurrently while the next windows prepare.
-Processes, not threads: PyMuPDF holds the GIL, so threads would render one page at a time.
+Processes, not threads: pdfminer is pure Python and PDFium allows one render at a time per process,
+so threads would prepare one page at a time.
 The global VLM semaphore (tools/vlm.py) bounds load on the vLLM server.
 """
 
@@ -11,7 +12,6 @@ import time
 from collections import Counter
 from concurrent.futures import ProcessPoolExecutor
 
-import pymupdf
 from sqlalchemy import select
 
 from ..config import models_cfg, rules_cfg
@@ -19,7 +19,7 @@ from ..db import session
 from ..events import emit_event, record_decision
 from ..models import Element, PageProfile
 from ..tools.figures import attach_captions, empty_cell_ratio, figure_regions, render_clip
-from ..tools.pdf import extract_text_elements, inside
+from ..tools.pdf import Page, extract_text_elements, inside, open_pdf
 from ..tools.vlm import PROMPTS, VLMClient
 from ..tools.vlm_output import md_to_elements, parse_figure, strip_fences
 from .common import PipelineState, update_summary
@@ -31,48 +31,51 @@ def _r(b) -> list[float]:
     return [round(v, 1) for v in b]
 
 
+def _prepare_page(pg: Page, parser: str, drawings: int, heading_min: float | None, pcfg: dict, vlm_on: bool, vcfg: dict) -> dict:
+    fmt = vcfg.get("image_format", "jpeg")
+    rect = _r(pg.rect)
+    prep = {"rect": rect, "elements": [], "fallback": [], "jobs": [], "regions": [], "skipped_regions": 0}
+    text_els = [{**e, "source_tool": "native_text"} for e in extract_text_elements(pg, heading_min)]
+
+    if parser == "vlm_ocr":
+        prep["fallback"] = text_els
+        prep["jobs"].append({"kind": "ocr", "bbox": rect, "image": render_clip(pg, rect, vcfg.get("render_dpi", 150), fmt, pad=0)})
+        return prep
+
+    # Ruled tables need drawings, so pages without any skip the (slow) table finder.
+    tables = []
+    for t in (pg.tables() if drawings else []):
+        el = {"type": "table", "bbox": _r(t.bbox), "content": t.to_markdown(), "source_tool": "native_tables",
+              "meta": {"empty_cell_ratio": empty_cell_ratio(t)}}
+        if vlm_on and el["meta"]["empty_cell_ratio"] > pcfg["tables"]["max_empty_cell_ratio"]:
+            prep["jobs"].append({"kind": "table", "bbox": el["bbox"], "target": el,
+                                 "image": render_clip(pg, el["bbox"], vcfg.get("crop_dpi", 170), fmt)})
+        tables.append(el)
+    table_boxes = [t["bbox"] for t in tables]
+    prep["elements"] = [e for e in text_els if not any(inside(e["bbox"], b) for b in table_boxes)] + tables
+
+    if parser == "vlm_figures" or pcfg["figures"]["enrich_native_pages"]:
+        regions = figure_regions(pg, table_boxes, pcfg["figures"]["min_area_ratio"], pcfg["figures"]["max_per_page"])
+        if parser == "vlm_figures" and not regions:
+            regions = [{"bbox": rect, "source": "page", "area_ratio": 1.0}]
+        prep["regions"] = regions
+        if vlm_on:
+            for r in regions:
+                prep["jobs"].append({"kind": "figure", "bbox": r["bbox"], "region": r,
+                                     "image": render_clip(pg, r["bbox"], vcfg.get("crop_dpi", 170), fmt)})
+        else:
+            prep["skipped_regions"] = len(regions)
+    return prep
+
+
 def _prepare_window(pdf_path: str, pages: list[tuple[int, str, int]], heading_min: float | None,
                     pcfg: dict, vlm_on: bool, vcfg: dict) -> dict[int, dict]:
     """Runs in a worker process (must stay picklable and free of DB access). pages: (page, parser, drawing count). Returns per-page native elements and VLM jobs."""
-    fmt = vcfg.get("image_format", "jpeg")
     out: dict[int, dict] = {}
-    with pymupdf.open(pdf_path) as doc:
+    with open_pdf(pdf_path) as doc:
         for p, parser, drawings in pages:
-            pg = doc[p]
-            rect = _r(pg.rect)
-            prep = {"rect": rect, "elements": [], "fallback": [], "jobs": [], "regions": [], "skipped_regions": 0}
-            text_els = [{**e, "source_tool": "pymupdf_text"} for e in extract_text_elements(pg, heading_min)]
-
-            if parser == "vlm_ocr":
-                prep["fallback"] = text_els
-                prep["jobs"].append({"kind": "ocr", "bbox": rect, "image": render_clip(pg, rect, vcfg.get("render_dpi", 150), fmt, pad=0)})
-                out[p] = prep
-                continue
-
-            # Ruled tables need drawings, so pages without any skip the (slow) table finder.
-            tables = []
-            for t in (pg.find_tables().tables if drawings else []):
-                el = {"type": "table", "bbox": _r(t.bbox), "content": t.to_markdown(), "source_tool": "pymupdf_tables",
-                      "meta": {"empty_cell_ratio": empty_cell_ratio(t)}}
-                if vlm_on and el["meta"]["empty_cell_ratio"] > pcfg["tables"]["max_empty_cell_ratio"]:
-                    prep["jobs"].append({"kind": "table", "bbox": el["bbox"], "target": el,
-                                         "image": render_clip(pg, el["bbox"], vcfg.get("crop_dpi", 170), fmt)})
-                tables.append(el)
-            table_boxes = [t["bbox"] for t in tables]
-            prep["elements"] = [e for e in text_els if not any(inside(e["bbox"], b) for b in table_boxes)] + tables
-
-            if parser == "vlm_figures" or pcfg["figures"]["enrich_native_pages"]:
-                regions = figure_regions(pg, table_boxes, pcfg["figures"]["min_area_ratio"], pcfg["figures"]["max_per_page"])
-                if parser == "vlm_figures" and not regions:
-                    regions = [{"bbox": rect, "source": "page", "area_ratio": 1.0}]
-                prep["regions"] = regions
-                if vlm_on:
-                    for r in regions:
-                        prep["jobs"].append({"kind": "figure", "bbox": r["bbox"], "region": r,
-                                             "image": render_clip(pg, r["bbox"], vcfg.get("crop_dpi", 170), fmt)})
-                else:
-                    prep["skipped_regions"] = len(regions)
-            out[p] = prep
+            with doc.page(p) as pg:
+                out[p] = _prepare_page(pg, parser, drawings, heading_min, pcfg, vlm_on, vcfg)
     return out
 
 
@@ -131,7 +134,7 @@ def _merge(run_id: str, page: int, label: str, prep: dict, pcfg: dict, stats: Co
                 els = new
             else:
                 els = prep["fallback"]
-                record_decision(run_id, STEP, f"page {page + 1}", "fallback pymupdf_text", rule_id="vlm_error",
+                record_decision(run_id, STEP, f"page {page + 1}", "fallback native_text", rule_id="vlm_error",
                                 inputs={"planned_parser": "vlm_ocr"}, confidence=0.3,
                                 reasoning=err or "VLM returned an empty transcription.")
         elif job["kind"] == "table":
@@ -145,7 +148,7 @@ def _merge(run_id: str, page: int, label: str, prep: dict, pcfg: dict, stats: Co
             stats["tables_reextracted"] += 1
             record_decision(run_id, STEP, f"page {page + 1}", "table re-extracted with VLM", rule_id="table_empty_cells",
                             inputs={"empty_cell_ratio": before, "max_empty_cell_ratio": pcfg["tables"]["max_empty_cell_ratio"], "bbox": t["bbox"]},
-                            alternatives=[{"choice": "keep pymupdf table", "reason_rejected": "too many empty cells (merged or borderless cells)"}],
+                            alternatives=[{"choice": "keep native table", "reason_rejected": "too many empty cells (merged or borderless cells)"}],
                             confidence=0.7)
         elif job["kind"] == "figure":
             if err:

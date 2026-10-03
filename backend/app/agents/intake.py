@@ -3,14 +3,14 @@
 import asyncio
 from pathlib import Path
 
-import pymupdf
-
 from ..config import rules_cfg, settings
 from ..db import session
 from ..events import emit_event, record_decision
 from ..models import Document
 from ..tools.office import OFFICE_EXT, detect, image_to_pdf, office_to_pdf, soffice_bin
 from ..tools.office_native import extract_hints, render_native
+from ..tools.pdf import open_pdf
+from ..tools.pdfgen import cjk_font
 from .common import PipelineState, get_document, update_summary
 
 NATIVE_FORMATS = {"docx", "pptx", "xlsx"}
@@ -42,10 +42,8 @@ async def intake(state: PipelineState) -> dict:
     else:
         raise ValueError(f"Unsupported format: .{info['extension']} ({info['magic_mime']})")
 
-    with pymupdf.open(pdf) as d:
-        if d.needs_pass:
-            raise ValueError("PDF is password protected")
-        page_count = d.page_count
+    with open_pdf(pdf) as d:
+        page_count = d.page_count  # raises ValueError for a password-protected PDF
     inputs["page_count"] = page_count
 
     record_decision(
@@ -76,6 +74,7 @@ async def _office(run_id: str, src: Path, fmt: str, out_dir: Path, inputs: dict)
         emit_event(run_id, "progress", STEP, f"Rendering .{fmt} natively")
         pdf, hints = await asyncio.to_thread(render_native, src, out_dir, fmt, cfg["xlsx_rows_per_page"], cfg["xlsx_max_rows"])
         hints["renderer"] = "native"
+        _record_font(run_id, hints["font"])
         why = ("spreadsheets keep every table readable" if fmt == "xlsx" and soffice
                else "configured preference" if soffice else "LibreOffice is not installed")
         alternatives = [{"choice": "LibreOffice", "reason_rejected": why}]
@@ -89,6 +88,21 @@ async def _office(run_id: str, src: Path, fmt: str, out_dir: Path, inputs: dict)
         hints["renderer"] = "libreoffice"
     alternatives = [{"choice": "native renderer", "reason_rejected": "LibreOffice keeps the original layout"}] if native_ok else []
     return pdf, "office_convert", f"{fmt.upper()}: convert to PDF with LibreOffice", hints, alternatives
+
+
+def _record_font(run_id: str, font: dict) -> None:
+    tried = cjk_font()["tried"]
+    if font["embedded"]:
+        record_decision(run_id, STEP, "office font", f"embed {Path(font['source']).name}", rule_id=font["rule_id"],
+                        inputs={"font": font["source"], "RAG_CJK_FONT": settings.cjk_font or None, "rejected_files": tried},
+                        confidence=1.0, reasoning="Hangul text needs a TrueType CJK font embedded in the rendered PDF.")
+        return
+    record_decision(run_id, STEP, "office font", "non-embedded CID font", rule_id=font["rule_id"],
+                    inputs={"font": font["source"], "RAG_CJK_FONT": settings.cjk_font or None, "rejected_files": tried},
+                    alternatives=[{"choice": "embedded TrueType font", "reason_rejected": "no usable font found; set RAG_CJK_FONT or install NanumGothic"}],
+                    confidence=0.5,
+                    reasoning="Text extraction still works, but page images show Hangul only where a Korean font is installed.")
+    emit_event(run_id, "warning", STEP, "No Korean TrueType font found: rendered pages use a non-embedded CID font")
 
 
 def _hint_summary(h: dict) -> dict:

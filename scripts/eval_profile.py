@@ -18,14 +18,12 @@ from collections import Counter, defaultdict
 from datetime import date
 from pathlib import Path
 
-import pymupdf
-
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "backend"))
 
 from app.config import rules_cfg  # noqa: E402
 from app.tools.office_native import render_native  # noqa: E402
-from app.tools.pdf import classify, page_features  # noqa: E402
+from app.tools.pdf import classify, open_pdf, page_features  # noqa: E402
 
 
 def load_pages(labels_path: Path) -> list[dict]:
@@ -37,10 +35,10 @@ def load_pages(labels_path: Path) -> list[dict]:
         pdf = src
         if src.suffix.lower().lstrip(".") in ("docx", "pptx", "xlsx"):
             pdf, _ = render_native(src, tmp, src.suffix.lower().lstrip("."))
-        with pymupdf.open(pdf) as doc:
+        with open_pdf(pdf) as doc:
             for p, label in d["pages"].items():
-                i = int(p) - 1
-                rows.append({"doc": d["file"], "page": int(p), "label": label, "features": page_features(doc[i])})
+                with doc.page(int(p) - 1) as pg:
+                    rows.append({"doc": d["file"], "page": int(p), "label": label, "features": page_features(pg)})
     return rows
 
 

@@ -1,51 +1,48 @@
-import pymupdf
-
 from app.config import rules_cfg
 from app.tools.figures import attach_captions, empty_cell_ratio, figure_regions
 from app.tools.vlm_output import md_to_elements, parse_figure
 
-from .conftest import FIGURE_RECT, gray_pixmap
+from .conftest import FIGURE_RECT, gray_image, one_page
 
 
-def _page_with_figures() -> tuple[pymupdf.Document, pymupdf.Page]:
-    doc = pymupdf.open()
-    page = doc.new_page()
-    # vector diagram: three boxes joined by lines -> one drawing cluster
-    for x in (80, 200, 320):
-        page.draw_rect(pymupdf.Rect(x, 100, x + 80, 200))
-    page.draw_line((160, 150), (200, 150))
-    page.draw_line((280, 150), (320, 150))
-    page.insert_image(FIGURE_RECT, pixmap=gray_pixmap(174, 110))
-    # small icon: below min_area_ratio
-    page.insert_image(pymupdf.Rect(500, 700, 520, 720), pixmap=gray_pixmap(10, 10))
-    return doc, page
+def _page_with_figures(tmp_path):
+    def draw(w):
+        # vector diagram: three boxes joined by lines -> one drawing cluster
+        for x in (80, 200, 320):
+            w.rect((x, 100, x + 80, 200))
+        w.line((160, 150), (200, 150))
+        w.line((280, 150), (320, 150))
+        w.image(FIGURE_RECT, gray_image(174, 110))
+        # small icon: below min_area_ratio
+        w.image((500, 700, 520, 720), gray_image(10, 10))
+    return one_page(tmp_path / "figures.pdf", draw)
 
 
-def test_figure_regions_finds_images_and_drawing_clusters():
-    doc, page = _page_with_figures()
+def test_figure_regions_finds_images_and_drawing_clusters(tmp_path):
+    doc, page = _page_with_figures(tmp_path)
     regions = figure_regions(page, [], min_area_ratio=0.04, max_regions=4)
     assert [r["source"] for r in regions] == ["drawing", "image"]
     assert regions[1]["bbox"] == [72, 380, 420, 600]
     doc.close()
 
 
-def test_figure_regions_skips_table_rulings():
-    doc, page = _page_with_figures()
+def test_figure_regions_skips_table_rulings(tmp_path):
+    doc, page = _page_with_figures(tmp_path)
     table_bbox = [70, 90, 410, 210]
     assert [r["source"] for r in figure_regions(page, [table_bbox], 0.04, 4)] == ["image"]
     doc.close()
 
 
-def test_empty_cell_ratio():
-    doc = pymupdf.open()
-    page = doc.new_page()
-    for r in range(5):
-        page.draw_line((72, 100 + r * 30), (372, 100 + r * 30))
-    for c in range(4):
-        page.draw_line((72 + c * 100, 100), (72 + c * 100, 220))
-    page.insert_text((80, 120), "only", fontsize=9)
-    page.insert_text((180, 150), "two", fontsize=9)
-    t = page.find_tables().tables[0]
+def test_empty_cell_ratio(tmp_path):
+    def draw(w):
+        for r in range(5):
+            w.line((72, 100 + r * 30), (372, 100 + r * 30))
+        for c in range(4):
+            w.line((72 + c * 100, 100), (72 + c * 100, 220))
+        w.text(80, 120, "only", size=9)
+        w.text(180, 150, "two", size=9)
+    doc, page = one_page(tmp_path / "t.pdf", draw)
+    t = page.tables()[0]
     assert empty_cell_ratio(t) > 0.5
     doc.close()
 
