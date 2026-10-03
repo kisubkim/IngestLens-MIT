@@ -1,0 +1,202 @@
+import { useCallback, useEffect, useRef, useState } from "react";
+import { api, type Doc } from "./api";
+import RunView from "./RunView";
+import SettingsView from "./SettingsView";
+
+const ACCEPT_EXT = [".pdf", ".doc", ".docx", ".ppt", ".pptx", ".xls", ".xlsx", ".hwp", ".png", ".jpg", ".jpeg", ".tif", ".tiff"];
+
+function fmtSize(bytes: number) {
+  return bytes >= 2 ** 20 ? `${(bytes / 2 ** 20).toFixed(1)} MB` : `${Math.ceil(bytes / 1024)} KB`;
+}
+
+function splitFiles(files: File[]) {
+  const ok: File[] = [];
+  const skipped: string[] = [];
+  for (const file of files) {
+    const name = file.name.toLowerCase();
+    if (ACCEPT_EXT.some((ext) => name.endsWith(ext))) ok.push(file);
+    else skipped.push(file.name);
+  }
+  return { ok, skipped };
+}
+
+export default function App() {
+  const [docs, setDocs] = useState<Doc[]>([]);
+  const [selected, setSelected] = useState<Doc | null>(null);
+  const [runId, setRunId] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [uploading, setUploading] = useState(0);
+  const [dragOver, setDragOver] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  // Documents added by upload that wait for "순서대로 실행", in upload order.
+  const [pending, setPending] = useState<string[]>([]);
+  const [showSettings, setShowSettings] = useState(false);
+  const fileInput = useRef<HTMLInputElement>(null);
+  const dragDepth = useRef(0);
+
+  const refresh = useCallback(() => api.documents().then(setDocs).catch((e) => setError(String(e))), []);
+  useEffect(() => {
+    refresh();
+  }, [refresh]);
+
+  // Keep the sidebar badges current while queued runs wait their turn on the server.
+  const active = docs.some((d) => d.latest_run && ["queued", "running"].includes(d.latest_run.status));
+  useEffect(() => {
+    if (!active) return;
+    const timer = setInterval(refresh, 2000);
+    return () => clearInterval(timer);
+  }, [active, refresh]);
+
+  const select = (d: Doc) => {
+    setShowSettings(false);
+    setSelected(d);
+    setRunId(d.latest_run?.id ?? null);
+  };
+
+  const upload = async (files: File[]) => {
+    if (!files.length || busy) return;
+    const { ok, skipped } = splitFiles(files);
+    const skippedMsg = skipped.length ? `지원하지 않는 형식은 올리지 않았습니다: ${skipped.join(", ")}` : null;
+    if (!ok.length) {
+      setError(skippedMsg);
+      return;
+    }
+    setBusy(true);
+    setUploading(ok.length);
+    setError(null);
+    try {
+      const uploaded = await api.upload(ok);
+      setPending((prev) => [...new Set([...prev, ...uploaded.map((d) => d.id)])]);
+      await refresh();
+      const created = uploaded.filter((d) => !d.duplicate);
+      select((created.length ? created : uploaded).at(-1)!);
+      if (skippedMsg) setError(skippedMsg);
+    } catch (e) {
+      setError(skippedMsg ? `${skippedMsg}\n${String(e)}` : String(e));
+    } finally {
+      setBusy(false);
+      setUploading(0);
+    }
+  };
+
+  const start = async () => {
+    if (!selected) return;
+    setError(null);
+    try {
+      const run = await api.startRun(selected.id);
+      setRunId(run.id);
+      refresh();
+    } catch (e) {
+      setError(String(e));
+    }
+  };
+
+  // The server runs them one at a time in this order; show the first one while the rest wait.
+  const startAll = async () => {
+    if (!pending.length) return;
+    setError(null);
+    try {
+      const runs = await api.startRuns(pending);
+      setPending([]);
+      await refresh();
+      const first = docs.find((d) => d.id === runs[0].document_id);
+      setShowSettings(false);
+      if (first) setSelected(first);
+      setRunId(runs[0].id);
+    } catch (e) {
+      setError(String(e));
+    }
+  };
+
+  return (
+    <div className="layout">
+      <aside
+        className={dragOver ? "sidebar dragover" : "sidebar"}
+        onDragEnter={(e) => {
+          e.preventDefault();
+          dragDepth.current += 1;
+          setDragOver(true);
+        }}
+        onDragOver={(e) => e.preventDefault()}
+        onDragLeave={() => {
+          dragDepth.current -= 1;
+          if (dragDepth.current <= 0) {
+            dragDepth.current = 0;
+            setDragOver(false);
+          }
+        }}
+        onDrop={(e) => {
+          e.preventDefault();
+          dragDepth.current = 0;
+          setDragOver(false);
+          upload(Array.from(e.dataTransfer.files));
+        }}
+      >
+        <h1>IngestLens</h1>
+        <button className="primary" disabled={busy} onClick={() => fileInput.current?.click()}>
+          {busy ? `업로드 중… ${uploading}개` : "문서 업로드"}
+        </button>
+        <input
+          ref={fileInput}
+          type="file"
+          hidden
+          multiple
+          accept={ACCEPT_EXT.join(",")}
+          onChange={(e) => {
+            upload(Array.from(e.target.files ?? []));
+            e.target.value = "";
+          }}
+        />
+        {pending.length > 0 && (
+          <div className="pending-bar">
+            <button className="primary" disabled={busy} onClick={startAll}>
+              추가한 {pending.length}개 순서대로 실행
+            </button>
+            <button onClick={() => setPending([])}>비우기</button>
+          </div>
+        )}
+        <ul className="doc-list">
+          {docs.map((d) => (
+            <li key={d.id} className={selected?.id === d.id ? "active" : ""} onClick={() => select(d)}>
+              <div className="doc-name">{d.filename}</div>
+              <div className="doc-meta">
+                {fmtSize(d.size)}
+                {d.page_count ? ` · ${d.page_count}p` : ""}
+                {pending.includes(d.id) && <span className="badge">대기 {pending.indexOf(d.id) + 1}</span>}
+                {d.latest_run && <span className={`badge ${d.latest_run.status}`}>{d.latest_run.status}</span>}
+              </div>
+            </li>
+          ))}
+          {!docs.length && <li className="empty">업로드된 문서가 없습니다.</li>}
+        </ul>
+        <button className={showSettings ? "settings-link active" : "settings-link"} onClick={() => setShowSettings(true)}>
+          저장 위치 설정
+        </button>
+      </aside>
+
+      <main className="main">
+        {error && <div className="error-box">{error}</div>}
+        {showSettings && <SettingsView />}
+        {!showSettings && !selected && <div className="placeholder">왼쪽에서 문서를 선택하거나 업로드하세요.</div>}
+        {!showSettings && selected && (
+          <>
+            <header className="doc-header">
+              <div>
+                <h2>{selected.filename}</h2>
+                <span className="muted">{fmtSize(selected.size)}</span>
+              </div>
+              <button className="primary" onClick={start}>
+                {runId ? "다시 실행" : "파이프라인 실행"}
+              </button>
+            </header>
+            {runId ? (
+              <RunView key={runId} runId={runId} documentId={selected.id} onFinished={refresh} />
+            ) : (
+              <div className="placeholder">아직 실행 기록이 없습니다.</div>
+            )}
+          </>
+        )}
+      </main>
+    </div>
+  );
+}

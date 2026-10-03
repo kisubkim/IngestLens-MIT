@@ -1,0 +1,131 @@
+import pymupdf
+import pytest
+from fastapi.testclient import TestClient
+
+from app.main import app
+from app.tools.chunking import split_table
+from app.tools.office_native import render_native
+
+from .office_fixtures import make_docx, make_pptx, make_xlsx
+from .test_pipeline import _wait
+
+
+def test_split_table_repeats_header():
+    md = "차트: 생산량\n\n| a | b |\n|---|---|\n" + "\n".join(f"| {i} | {i * 2} |" for i in range(60))
+    parts = split_table(md, 200)
+    assert len(parts) > 1
+    for p in parts:
+        assert p.startswith("차트: 생산량\n\n| a | b |\n|---|---|\n") and len(p) <= 200
+    assert sum(p.count("\n| ") for p in parts) - 1 * len(parts) == 60  # every data row kept once
+
+
+def test_render_native_units(tmp_path):
+    pdf, h = render_native(make_pptx(tmp_path / "p.pptx"), tmp_path / "o", "pptx")
+    assert [s["page"] for s in h["slides"]] == [0, 1, 2]
+    assert h["slides"][0]["notes"].startswith("발표자 노트")
+    assert h["slides"][1]["charts"][0]["rows"][1] == ["1월", 120.0]
+    with pymupdf.open(pdf) as d:
+        assert d.page_count == 3 and "120" in d[1].get_text() and "120.0" not in d[1].get_text()
+
+    pdf, h = render_native(make_xlsx(tmp_path / "x.xlsx", rows=130), tmp_path / "o", "xlsx")
+    assert h["sheets"][0] == {"sheet": "측정값", "rows": 130, "cols": 4, "truncated": False}
+    with pymupdf.open(pdf) as d:
+        # every page is a whole block: one table whose first row is the header
+        assert d.page_count == len(h["unit_pages"]) == 7  # ceil(130/24) + 1 summary sheet
+        assert all(p.find_tables().tables[0].extract()[0][0] in ("일자", "장비") for p in d)
+
+
+def _run(client, path, name):
+    with path.open("rb") as f:
+        doc = client.post("/api/documents", files={"file": (name, f, "application/octet-stream")}).json()
+    run = _wait(client, client.post(f"/api/documents/{doc['id']}/runs").json()["id"])
+    return run
+
+
+def _decision(client, run_id, subject):
+    return next(d for d in client.get(f"/api/runs/{run_id}/decisions").json() if d["subject"] == subject)
+
+
+@pytest.fixture
+def no_libreoffice(monkeypatch):
+    import app.agents.intake as intake
+
+    monkeypatch.setattr(intake, "soffice_bin", lambda: None)
+
+
+def test_docx_native(tmp_path, no_libreoffice):
+    with TestClient(app) as client:
+        run = _run(client, make_docx(tmp_path / "m.docx"), "manual.docx")
+        assert run["status"] == "succeeded", run["error"]
+        d = _decision(client, run["id"], "document format")
+        assert d["rule_id"] == "office_native" and "LibreOffice is not installed" in d["choice"]
+        assert _decision(client, run["id"], "chunking")["rule_id"] == "docx_headings"
+        els = client.get(f"/api/runs/{run['id']}/elements").json()
+        titles = [e["content"] for e in els if e["type"] == "title"]
+        assert {"장비 운영 매뉴얼", "1. 개요", "2.1 준비물", "3. 점검 항목"} <= set(titles)
+        assert any(e["type"] == "table" and "25±2" in e["content"] for e in els)
+        sections = {c["section"] for c in client.get(f"/api/runs/{run['id']}/chunks").json()["items"]}
+        assert {"1. 개요", "2. 설치 절차", "3. 점검 항목"} <= sections
+        assert run["summary"]["office"] == {"kind": "docx", "renderer": "native", "headings": 5, "images": 1}
+
+
+def test_pptx_native(tmp_path, no_libreoffice):
+    with TestClient(app) as client:
+        run = _run(client, make_pptx(tmp_path / "d.pptx"), "deck.pptx")
+        assert run["status"] == "succeeded", run["error"]
+        assert run["summary"]["plan"]["chunking"]["strategy"] == "page"
+        assert run["summary"]["office"]["with_notes"] == 1
+        els = client.get(f"/api/runs/{run['id']}/elements").json()
+        notes = [e for e in els if e["source_tool"] == "pptx_notes"]
+        assert len(notes) == 1 and notes[0]["page"] == 0
+        assert any(e["page"] == 1 and e["type"] == "table" and "135" in e["content"] for e in els)  # chart data
+        assert {e["content"] for e in els if e["type"] == "title"} >= {"프로젝트 개요", "월별 생산량", "점검 결과"}
+        chunks = client.get(f"/api/runs/{run['id']}/chunks").json()["items"]
+        assert all(len(c["pages"]) == 1 for c in chunks)  # page strategy: nothing spans slides
+
+
+def test_xlsx_native_even_with_libreoffice(tmp_path, monkeypatch):
+    import app.agents.intake as intake
+
+    monkeypatch.setattr(intake, "soffice_bin", lambda: "soffice")  # present, but xlsx stays native by config
+    with TestClient(app) as client:
+        run = _run(client, make_xlsx(tmp_path / "s.xlsx", rows=130), "sheet.xlsx")
+        assert run["status"] == "succeeded", run["error"]
+        assert "spreadsheets keep every table readable" in _decision(client, run["id"], "document format")["choice"]
+        tables = client.get(f"/api/runs/{run['id']}/chunks", params={"type": "table"}).json()["items"]
+        assert len(tables) >= 6
+        assert all("일자" in c["text"] or "장비" in c["text"] for c in tables)  # header in every table chunk
+
+
+def test_pptx_libreoffice_path_adds_chart_data(tmp_path, monkeypatch):
+    """LibreOffice draws charts as vector art; the chart's own data comes from the pptx instead."""
+    import app.agents.intake as intake
+
+    def fake_convert(src, out_dir, timeout_s=600):
+        # Stand-in for LibreOffice: a PDF with one page per slide and no chart table.
+        out_dir.mkdir(parents=True, exist_ok=True)
+        pdf = out_dir / "lo.pdf"
+        d = pymupdf.open()
+        for title in ("프로젝트 개요", "월별 생산량", "점검 결과"):
+            d.new_page(width=960, height=540).insert_text((40, 60), title, fontsize=24, fontname="korea")
+        d.save(pdf)
+        return pdf
+
+    monkeypatch.setattr(intake, "soffice_bin", lambda: "soffice")
+    monkeypatch.setattr(intake, "office_to_pdf", fake_convert)
+    with TestClient(app) as client:
+        run = _run(client, make_pptx(tmp_path / "lo.pptx"), "lo.pptx")
+        assert run["status"] == "succeeded", run["error"]
+        assert _decision(client, run["id"], "document format")["rule_id"] == "office_convert"
+        els = client.get(f"/api/runs/{run['id']}/elements", params={"page": 1}).json()
+        chart = [e for e in els if e["source_tool"] == "pptx_chart_data"]
+        assert len(chart) == 1 and "| 1월 | 120 |" in chart[0]["content"]
+        assert run["summary"]["parse"]["office_hints"]["notes"] == 1
+
+
+def test_legacy_doc_without_libreoffice_fails_clearly(tmp_path, no_libreoffice):
+    p = tmp_path / "old.doc"
+    p.write_bytes(b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1" + b"\0" * 600)  # OLE2 header
+    with TestClient(app) as client:
+        run = _run(client, p, "old.doc")
+        assert run["status"] == "failed" and "needs LibreOffice" in run["error"]
