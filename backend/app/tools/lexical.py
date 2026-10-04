@@ -51,6 +51,14 @@ class BM25:
 _cache: "OrderedDict[str, tuple[BM25, list[str]]]" = OrderedDict()
 
 
+def forget(run_id: str) -> None:
+    _cache.pop(run_id, None)
+
+
+def forget_all() -> None:
+    _cache.clear()
+
+
 def index_for(run_id: str, chunks: list[tuple[str, str]]) -> tuple[BM25, list[str]]:
     """chunks: (chunk_id, text). Cached per run; chunks of a finished run never change."""
     if run_id in _cache:

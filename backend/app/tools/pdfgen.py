@@ -115,9 +115,21 @@ class PdfWriter:
         self.c.setLineWidth(width)
         self.c.line(p0[0], self.h - p0[1], p1[0], self.h - p1[1])
 
-    def rect(self, r, width: float = 1) -> None:
+    def rect(self, r, width: float = 1, fill: tuple[float, float, float] | None = None) -> None:
+        """Black outline; fill is an RGB triple in 0..1."""
         self.c.setLineWidth(width)
-        self.c.rect(r[0], self.h - r[3], r[2] - r[0], r[3] - r[1], stroke=1, fill=0)
+        if fill is not None:
+            self.c.setFillColorRGB(*fill)
+        self.c.rect(r[0], self.h - r[3], r[2] - r[0], r[3] - r[1], stroke=1, fill=int(fill is not None))
+        self.c.setFillColorRGB(0, 0, 0)
+
+    def polyline(self, points, width: float = 1) -> None:
+        self.c.setLineWidth(width)
+        path = self.c.beginPath()
+        path.moveTo(points[0][0], self.h - points[0][1])
+        for x, y in points[1:]:
+            path.lineTo(x, self.h - y)
+        self.c.drawPath(path, stroke=1, fill=0)
 
     def image(self, r, img) -> None:
         """img: a PIL image, encoded bytes, or a file path (a JPEG path is embedded without re-encoding)."""

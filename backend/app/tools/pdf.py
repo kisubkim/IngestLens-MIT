@@ -6,6 +6,7 @@ the crop box and after /Rotate: the same space as the rendered page image.
 """
 
 import io
+import logging
 import threading
 from collections import Counter
 
@@ -16,6 +17,8 @@ from pdfminer.layout import LTChar, LTContainer, LTCurve, LTImage, LTTextBox, LT
 # boxes_flow=None: no reading-order analysis (we sort blocks ourselves); all_texts: also text inside form XObjects.
 LAPARAMS = {"all_texts": True, "boxes_flow": None}
 _pdfium_lock = threading.Lock()  # PDFium is not thread-safe; renders in one process run one at a time
+# pdfminer warns once per glyph run about harmless font quirks (e.g. a missing FontBBox); real PDFs flood the log.
+logging.getLogger("pdfminer").setLevel(logging.ERROR)
 
 
 def _area(r) -> float:
@@ -93,7 +96,8 @@ class Page:
         """Ruled tables (pdfplumber "lines" strategy). Single cells and single rows/columns are boxes, not tables."""
         if self._tables is None:
             self._tables = []
-            for t in self._pp.find_tables():
+            sides = _open_side_edges(self._pp.edges)
+            for t in self._pp.find_tables({"explicit_vertical_lines": sides} if sides else None):
                 rows = t.extract()
                 if len(rows) < 2 or max(len(r) for r in rows) < 2:
                     continue
@@ -116,6 +120,32 @@ class Page:
 
     def __exit__(self, *exc) -> None:
         self.close()
+
+
+def _open_side_edges(edges: list[dict], max_row_gap: float = 80) -> list[dict]:
+    """Virtual left/right borders for open-sided tables (common in Korean government reports): horizontal rules
+    span the full table width but the outer vertical borders are not drawn, so the "lines" strategy drops the
+    first and last columns. Neighbouring rules with the same ends get a border at each end, but only where a
+    real vertical rule lies between them (evidence of a grid, so plain separator lines do not become tables)."""
+    hs = [e for e in edges if e["orientation"] == "h" and e["width"] >= 20]
+    vs = [e for e in edges if e["orientation"] == "v"]
+    groups: dict[tuple, list[dict]] = {}
+    for e in hs:
+        groups.setdefault((round(e["x0"] / 2), round(e["x1"] / 2)), []).append(e)
+    out = []
+    for rules in groups.values():
+        rules.sort(key=lambda e: e["top"])
+        x0, x1 = min(e["x0"] for e in rules), max(e["x1"] for e in rules)
+        for a, b in zip(rules, rules[1:]):
+            top, bottom = a["top"], b["top"]
+            if not 2 < bottom - top <= max_row_gap:
+                continue
+            if not any(x0 + 2 < v["x0"] < x1 - 2 and v["top"] < bottom - 1 and v["bottom"] > top + 1 for v in vs):
+                continue
+            for x in (x0, x1):
+                out.append({"object_type": "virtual_edge", "orientation": "v", "x0": x, "x1": x, "top": top, "bottom": bottom,
+                            "doctop": a["doctop"], "width": 0, "height": bottom - top})
+    return out
 
 
 def _reading_key(block: dict) -> tuple:

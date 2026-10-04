@@ -37,3 +37,23 @@ def test_small_table_page_is_table(tmp_path):
     doc.close()
     assert f["table_area_ratio"] < 0.3 and f["table_text_share"] > 0.5
     assert classify(f, rules_cfg()["profiler"])["rule_id"] == "table_text_share"
+
+
+def test_open_sided_table_keeps_outer_columns(tmp_path):
+    """Government-report style: full-width horizontal rules, inner vertical rules only, no left/right border."""
+    def draw(w):
+        for y in (100, 130, 160):
+            w.line((60, y), (540, y))
+        for x in (180, 300, 420):
+            w.line((x, 100), (x, 160))
+        for r, y in enumerate((120, 150)):
+            for c, x in enumerate((70, 190, 310, 430)):
+                w.text(x, y, f"r{r}c{c}", size=10)
+        w.line((60, 400), (540, 400))  # plain separators with nothing between them stay out of tables
+        w.line((60, 430), (540, 430))
+    doc, page = one_page(tmp_path / "open.pdf", draw)
+    tables = page.tables()
+    doc.close()
+    assert len(tables) == 1
+    assert [round(v) for v in (tables[0].bbox[0], tables[0].bbox[2])] == [60, 540]
+    assert tables[0].rows[0] == ["r0c0", "r0c1", "r0c2", "r0c3"]

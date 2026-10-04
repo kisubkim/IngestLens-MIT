@@ -16,7 +16,7 @@ from sqlalchemy.engine import make_url
 
 from ..config import ROOT, SETTINGS_FILE, Settings, settings
 from ..graph.pipeline import _tasks
-from .auth import LOOPBACK, require_admin
+from .auth import is_local, require_admin
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
 
@@ -103,6 +103,7 @@ def _state(request: Request) -> dict:
             "configured": _show(key, upcoming),
             "source": source,
             "locked": source in ("env", "dotenv"),
+            "hint": settings.data_dir_hint if key == "data_dir" else "",
             "pending": effective != upcoming,
         })
     host = request.client.host if request.client else ""
@@ -114,7 +115,7 @@ def _state(request: Request) -> dict:
         "usage": _usage(),
         "restart_required": any(i["pending"] for i in items),
         "key_required": bool(settings.api_key),
-        "editable_here": bool(settings.api_key) or host in LOOPBACK,
+        "editable_here": bool(settings.api_key) or is_local(host),
         "active_runs": len(_tasks),
     }
 

@@ -1,3 +1,4 @@
+import ipaddress
 import secrets
 
 from fastapi import Header, HTTPException, Request
@@ -5,6 +6,25 @@ from fastapi import Header, HTTPException, Request
 from ..config import settings
 
 LOOPBACK = {"127.0.0.1", "::1", "localhost"}
+
+
+def is_local(host: str) -> bool:
+    """A request from this machine: loopback, or an address in RAG_ADMIN_HOSTS (IPs or CIDRs).
+    Behind a reverse proxy or container port publishing, the browser on the host arrives from another address
+    (e.g. a Docker bridge gateway 172.18.0.1); list that address or range here, and bind the port to 127.0.0.1."""
+    if host in LOOPBACK:
+        return True
+    try:
+        addr = ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    for item in filter(None, (s.strip() for s in settings.admin_hosts.split(","))):
+        try:
+            if addr in ipaddress.ip_network(item, strict=False):
+                return True
+        except ValueError:
+            continue
+    return False
 
 
 def _bearer_ok(authorization: str | None) -> bool:
@@ -23,5 +43,5 @@ def require_admin(request: Request, authorization: str | None = Header(None)) ->
     if settings.api_key:
         if not _bearer_ok(authorization):
             raise HTTPException(401, "invalid or missing API key", headers={"WWW-Authenticate": "Bearer"})
-    elif (request.client.host if request.client else "") not in LOOPBACK:
+    elif not is_local(request.client.host if request.client else ""):
         raise HTTPException(403, "set RAG_API_KEY to change settings from another machine")

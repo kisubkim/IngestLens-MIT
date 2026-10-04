@@ -178,6 +178,7 @@ export interface StorageItem {
   source: "env" | "dotenv" | "file" | "default";
   locked: boolean;
   pending: boolean;
+  hint: string;
 }
 
 export interface StorageState {
@@ -190,6 +191,118 @@ export interface StorageState {
   key_required: boolean;
   editable_here: boolean;
   active_runs: number;
+}
+
+export interface EvalCheck {
+  id: string;
+  label: string;
+  score: number;
+  pass: boolean;
+  value: any;
+}
+
+export interface VlmEvalSummary {
+  score: number;
+  checks_passed: number;
+  checks_total: number;
+  by_check: Record<string, { label: string; score: number; passed: number; total: number }>;
+  ocr_cer: number | null;
+  ingest_seconds: number;
+  parse_seconds: number;
+  vlm_calls: number;
+  vlm_errors: number;
+  vlm_truncated: number;
+  vlm_avg_seconds: number | null;
+}
+
+export interface VlmEvalItem {
+  file: string;
+  name: string;
+  notes: string;
+  created_at: string;
+  git_commit: string | null;
+  models: Record<string, Record<string, any>>;
+  prompts_sha: string;
+  dataset: string | null;
+  dataset_version: string | null;
+  summary: VlmEvalSummary;
+}
+
+export interface VlmEvalPage {
+  doc: string;
+  page: number;
+  id: string;
+  title: string;
+  score: number | null;
+  checks: EvalCheck[];
+  label: string | null;
+  vlm_seconds: number | null;
+  elements: { type: string; source_tool: string; content: string; meta: Record<string, any> }[];
+  expected_text: string | null;
+}
+
+export interface VlmEvalResult extends VlmEvalItem {
+  pages: VlmEvalPage[];
+}
+
+export interface ElementStats {
+  total: number;
+  by_type: Record<string, number>;
+  pages: {
+    page: number;
+    label: string | null;
+    parser: string | null;
+    total: number;
+    chars: number;
+    by_type: Record<string, number>;
+    by_tool: Record<string, number>;
+  }[];
+  empty_pages: number[];
+}
+
+export interface Overview {
+  documents: { count: number; bytes: number; pages: number; by_format: Record<string, number> };
+  runs: { total: number; by_status: Record<string, number> };
+  chunks: number;
+  vectors: {
+    total: number;
+    collections: { name: string; model: string; dim: number | null; points: number }[];
+    embedding_model: string;
+    embedding_configured: boolean;
+  };
+  storage: { items: { key: string; label: string; path: string; bytes: number | null }[]; bytes: number; data_dir: string };
+  recent: (Doc & { chunks: number })[];
+}
+
+export interface PurgeResult {
+  documents: number;
+  runs: number;
+  chunks: number;
+  elements: number;
+}
+
+/** Turn the server's refusal into a sentence the user can act on. */
+async function purgeJson(res: Response): Promise<PurgeResult> {
+  if (res.ok) return res.json();
+  const reason =
+    res.status === 409
+      ? "실행 중이거나 대기 중인 문서가 있어 삭제할 수 없습니다. 먼저 실행을 취소하세요."
+      : res.status === 403
+        ? "삭제는 서버가 돌아가는 PC에서만 할 수 있습니다. 다른 PC에서 하려면 서버에 RAG_API_KEY를 설정하세요."
+        : res.status === 401
+          ? "API 키가 맞지 않습니다."
+          : `${res.status} ${await res.text()}`;
+  throw new Error(reason);
+}
+
+export type StatusState ="ok" | "warn" | "off" | "error";
+
+export interface BackendStatus {
+  overall: "ok" | "warn" | "error";
+  version: string;
+  checked_at: string;
+  items: { key: string; label: string; state: StatusState; detail: string; latency_ms: number | null }[];
+  runs: { running: number; queued: number };
 }
 
 export const pageImage =(docId: string, page: number, dpi = 96) => `/api/documents/${docId}/pages/${page}.png?dpi=${dpi}`;
@@ -248,6 +361,16 @@ export const api = {
   },
   embeddings: (runId: string) => fetch(`/api/runs/${runId}/embeddings`).then(json<Projection>),
   neighbors: (runId: string, chunkId: string, k = 5) => fetch(`/api/runs/${runId}/chunks/${chunkId}/neighbors?k=${k}`).then(json<Neighbor[]>),
+  vlmEvals: () =>
+    fetch("/api/evals/vlm").then(json<{ dir: string; items: VlmEvalItem[]; errors: { file: string; error: string }[] }>),
+  overview: () => fetch("/api/overview").then(json<Overview>),
+  elementStats: (runId: string) => fetch(`/api/runs/${runId}/element-stats`).then(json<ElementStats>),
+  deleteDocument: (docId: string, apiKey?: string) =>
+    fetch(`/api/documents/${docId}`, { method: "DELETE", headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : {} }).then(purgeJson),
+  deleteAll: (apiKey?: string) =>
+    fetch("/api/documents?confirm=all", { method: "DELETE", headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : {} }).then(purgeJson),
+  status: (refresh = false) => fetch(`/api/status${refresh ? "?refresh=true" : ""}`).then(json<BackendStatus>),
+  vlmEval: (file: string) => fetch(`/api/evals/vlm/${encodeURIComponent(file)}`).then(json<VlmEvalResult>),
 };
 
 /** Subscribe to a run's event stream. Reconnects from the last seen id; stops after run_finished. */

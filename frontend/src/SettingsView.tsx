@@ -21,13 +21,15 @@ function fmtBytes(bytes: number | null) {
   return `${Math.ceil(bytes / 1024)} KB`;
 }
 
-export default function SettingsView() {
+export default function SettingsView({ docCount, onCleared }: { docCount: number; onCleared: () => void }) {
   const [state, setState] = useState<StorageState | null>(null);
   const [draft, setDraft] = useState<Partial<Record<StorageKey, string>>>({});
   const [apiKey, setApiKey] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
+  const [clearing, setClearing] = useState(false);
+  const [cleared, setCleared] = useState<string | null>(null);
 
   const load = () => api.storage().then(setState).catch((e) => setError(String(e)));
   useEffect(() => {
@@ -51,6 +53,26 @@ export default function SettingsView() {
       setError(String(e));
     } finally {
       setSaving(false);
+    }
+  };
+
+  const clearAll = async () => {
+    const typed = window.prompt(
+      `문서 ${docCount}개와 관련된 모든 데이터를 삭제합니다. 되돌릴 수 없습니다.\n계속하려면 "전체 삭제"라고 입력하세요.`,
+    );
+    if (typed?.trim() !== "전체 삭제") return;
+    setClearing(true);
+    setError(null);
+    setCleared(null);
+    try {
+      const r = await api.deleteAll(apiKey || undefined);
+      setCleared(`문서 ${r.documents}개, 실행 ${r.runs}개, 청크 ${r.chunks}개를 삭제했습니다.`);
+      onCleared();
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setClearing(false);
     }
   };
 
@@ -129,7 +151,8 @@ export default function SettingsView() {
             />
             <div className="muted">
               {item.locked
-                ? `RAG_${item.key.toUpperCase()}가 ${SOURCE_LABEL[item.source]}로 설정되어 있어 여기서 바꿀 수 없습니다.`
+                ? item.hint ||
+                  `RAG_${item.key.toUpperCase()}가 ${SOURCE_LABEL[item.source]}로 설정되어 있어 여기서 바꿀 수 없습니다.`
                 : item.pending
                   ? `지금 사용 중: ${item.effective}`
                   : null}
@@ -154,6 +177,20 @@ export default function SettingsView() {
         <p className="muted">
           설정 파일: <span className="mono">{state.settings_file}</span>. 환경 변수와 .env가 이 파일보다 우선합니다.
         </p>
+      </section>
+
+      <section className="card danger-zone">
+        <h3>데이터 비우기</h3>
+        <p>
+          올린 문서 <b>{docCount}</b>개와 그 실행 기록, 파싱·청크 결과, 임베딩 벡터, 원본·변환 파일, 페이지 이미지를 모두 지웁니다. 되돌릴 수
+          없습니다. 문서 하나만 지우려면 문서를 연 뒤 위쪽의 "문서 삭제"를 누르세요.
+        </p>
+        <div className="setting-actions">
+          <button className="danger" disabled={!canEdit || clearing || docCount === 0} onClick={clearAll}>
+            {clearing ? "삭제 중…" : "전체 삭제"}
+          </button>
+          {cleared && <span className="muted">{cleared}</span>}
+        </div>
       </section>
     </div>
   );

@@ -172,6 +172,41 @@ def _mock_vlm(monkeypatch, delay: float = 0.0):
     return calls
 
 
+def test_truncated_vlm_answer_is_retried_with_larger_limit(monkeypatch):
+    from collections import Counter
+
+    from app.agents import parser
+    from app.tools import vlm
+
+    limits = []
+
+    class FakeVLM:
+        cfg = {"max_tokens": 100, "max_tokens_retry": 300}
+
+        async def ask(self, image, prompt, max_tokens=None):
+            limits.append(max_tokens)
+            if max_tokens is None:  # first call uses the configured limit and is cut off
+                return vlm.VLMResult("# 표\n\n| a | b |\n|---|---|\n| 1 |", "length", 1.0)
+            return vlm.VLMResult("# 표\n\n| a | b |\n|---|---|\n| 1 | 2 |\n| 3 | 4 |", "stop", 2.0)
+
+    decisions = []
+    monkeypatch.setattr(parser, "record_decision", lambda *a, **k: decisions.append((a, k)))
+    monkeypatch.setattr(parser, "emit_event", lambda *a, **k: None)
+    job = {"kind": "ocr", "image": b"\xff\xd8x", "bbox": [0, 0, 100, 100]}
+    preps = {0: {"elements": [], "fallback": [], "jobs": [job]}}
+    stats = Counter()
+    asyncio.run(parser._run_jobs(FakeVLM(), preps, stats))
+    assert limits == [None, 300]
+    assert job["retry"] == {"max_tokens": 100, "retry_max_tokens": 300, "first_seconds": 1.0}
+
+    pcfg = {"captions": {"pattern": "^그림", "max_gap": 40}, "tables": {"max_empty_cell_ratio": 0.5}}
+    els = parser._merge("run", 0, "scanned", preps[0], pcfg, stats)
+    assert "| 3 | 4 |" in next(e["content"] for e in els if e["type"] == "table")
+    assert stats["vlm_retried"] == 1 and stats["vlm_truncated"] == 0
+    (args, kw), = decisions
+    assert kw["rule_id"] == "vlm_truncated_retry" and kw["inputs"]["truncated_again"] is False
+
+
 def test_vlm_parsers_with_mock(sample_pdf, monkeypatch):
     _mock_vlm(monkeypatch)
     with TestClient(app) as client:

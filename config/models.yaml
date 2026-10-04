@@ -24,5 +24,6 @@ vlm:
   crop_dpi: 170           # figure / table crops
   image_format: jpeg      # jpeg keeps base64 payloads small; png for lossless OCR if needed
   max_tokens: 2048
+  max_tokens_retry: 4096  # an answer cut off at max_tokens is asked again once with this limit (long pages, big tables)
   max_retries: 2
   timeout_s: 180

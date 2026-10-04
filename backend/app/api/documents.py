@@ -5,7 +5,7 @@ import uuid
 from collections.abc import AsyncIterator
 from pathlib import Path
 
-from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from sqlalchemy import select
@@ -15,6 +15,8 @@ from ..db import session
 from ..graph.pipeline import start_run
 from ..models import Document, Run, to_dict
 from ..tools.pdf import open_pdf
+from ..tools.purge import active_runs, purge_all, purge_documents
+from .auth import require_admin
 
 router = APIRouter(prefix="/api/documents", tags=["documents"])
 CHUNK = 1 << 20
@@ -132,6 +134,25 @@ async def create_run(doc_id: str) -> dict:
         out = to_dict(run)
     start_run(out["id"], doc_id)
     return out
+
+
+@router.delete("", dependencies=[Depends(require_admin)])
+async def delete_all(confirm: str = "") -> dict:
+    """Every document with its runs, chunks, vectors and files. Needs ?confirm=all so it cannot happen by accident."""
+    if confirm != "all":
+        raise HTTPException(400, "add ?confirm=all to delete every document")
+    if busy := active_runs():
+        raise HTTPException(409, f"{len(busy)} run(s) still queued or running; cancel them first")
+    return await asyncio.to_thread(purge_all)
+
+
+@router.delete("/{doc_id}", dependencies=[Depends(require_admin)])
+async def delete_document(doc_id: str) -> dict:
+    """The document with its runs, chunks, vectors, uploaded file, converted PDF and page images."""
+    _doc(doc_id)
+    if active_runs([doc_id]):
+        raise HTTPException(409, "this document has a queued or running run; cancel it first")
+    return await asyncio.to_thread(purge_documents, [doc_id])
 
 
 def _render_cached(pdf_path: str, page: int, dpi: int, out: Path) -> None:

@@ -1,0 +1,9 @@
+# cmd 는 LF 줄바꿈 bat 파일에서 goto/라벨을 잘못 읽는다. sh 는 CRLF 이면 Linux 에서 실행되지 않는다.
+*.bat text eol=crlf
+*.sh  text eol=lf
+
+# 서버에서 sh 가 읽는 설정 파일
+deploy/*.env.example text eol=lf
+
+# PDF는 바이너리로 다룬다. Git for Windows 기본 설정(astextplain)이 diff에서 PDF를 텍스트로 바꿔 패치가 깨진 적이 있다.
+*.pdf binary

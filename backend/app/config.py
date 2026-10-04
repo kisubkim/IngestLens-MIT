@@ -21,7 +21,10 @@ class Settings(BaseSettings):
     soffice_path: str = ""  # LibreOffice binary; empty = search PATH
     cjk_font: str = ""  # TrueType font with Hangul for PDFs the app writes; empty = search the system
     api_key: str = ""  # Bearer token for the ingest API (/api/ingest, Open WebUI loader); empty = no auth
+    admin_hosts: str = ""  # extra IPs/CIDRs treated as "this machine" for settings changes (Docker bridge gateway)
+    data_dir_hint: str = ""  # shown when data_dir is locked, e.g. how the Docker volume decides the data folder
     ingest_wait_seconds: float = 3600  # how long the Open WebUI loader waits for a run before giving up
+    evals_dir: Path = ROOT / "evals" / "results"  # result files of scripts/eval_*.py shown by the comparison screen
 
     @classmethod
     def settings_customise_sources(

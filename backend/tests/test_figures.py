@@ -62,6 +62,19 @@ def test_attach_captions_moves_caption_into_figure():
     assert fig["content"].startswith("**그림 1. 시스템 구성도**")
 
 
+def test_attach_captions_bracketed_labels():
+    """Government reports write captions as [그림 1], <표 1> or 【그림 1】, often above the figure."""
+    pattern = rules_cfg()["parse"]["captions"]["pattern"]
+    for caption in ("[그림 1] 전국 월별 출생 추이", "<표 2> 시도별 출생아 수", "【그림 3】 흐름도", "(Figure 4) Flow"):
+        els = [{"type": "text", "bbox": [72, 300, 400, 312], "content": caption},
+               {"type": "figure", "bbox": [72, 320, 420, 500], "content": "chart"}]
+        out = attach_captions(els, pattern, max_gap=40)
+        assert out[0]["meta"]["caption"] == caption, caption
+    els = [{"type": "text", "bbox": [72, 300, 400, 312], "content": "[참고] 그림 1은 예시다"},
+           {"type": "figure", "bbox": [72, 320, 420, 500], "content": "chart"}]
+    assert len(attach_captions(els, pattern, max_gap=40)) == 2
+
+
 def test_parse_figure():
     assert parse_figure("TYPE: chart\n| x | y |") == ("chart", "| x | y |")
     assert parse_figure("```markdown\n**TYPE:** Diagram\nA -> B\n```") == ("diagram", "A -> B")

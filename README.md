@@ -25,6 +25,26 @@ cd backend
 
 UI 개발: `cd frontend && npm run dev`. `/api`는 `127.0.0.1:8000`으로 proxy된다.
 
+## 첫 화면 (임베딩 DB 현황)
+
+문서를 고르지 않았을 때나 왼쪽 위 "IngestLens"를 누르면 보인다. 문서 수와 원본 용량, 페이지 수, 벡터와 청크 수(문서별 최신 실행), 임베딩 모델, 실행 결과, 데이터 폴더별 디스크 사용량, 최근 문서를 보여준다. 최근 문서를 누르면 그 문서가 열린다. API: `GET /api/overview`
+
+## 문서 삭제
+
+- **문서 하나:** 문서를 연 뒤 오른쪽 위 "문서 삭제". 올린 원본, 변환 PDF, 페이지 이미지, 모든 실행 기록, 파싱·청크 결과, 임베딩 벡터를 함께 지운다.
+- **전체:** 저장 위치 설정 화면 아래 "데이터 비우기 → 전체 삭제". 확인을 위해 "전체 삭제"를 입력해야 한다.
+- 실행 중이거나 대기 중인 문서는 지울 수 없다. 먼저 실행을 취소한다.
+- 저장 위치 설정과 같이 서버가 돌아가는 PC에서만 지울 수 있다(`RAG_API_KEY`를 설정하면 그 키로 어디서나).
+- API: `DELETE /api/documents/{id}`, `DELETE /api/documents?confirm=all`
+
+## 백엔드 상태 확인
+
+화면 왼쪽 아래에 백엔드 상태가 색으로 표시된다(초록 정상, 노랑 주의, 빨강 오류나 연결 안 됨). 15초마다 다시 확인하며, 누르면 `/#status`에서 항목별로 볼 수 있다.
+
+- 확인 항목: API 서버, DB, 벡터 DB, 임베딩, VLM, reranker, LibreOffice, 실행 대기열
+- 모델 서버는 `GET {base_url}/models`로 응답과 설정한 모델이 있는지 본다. models.yaml에 주소를 비운 항목은 "꺼짐"으로 표시하며, 파이프라인은 대체 방식으로 계속 동작한다.
+- API: `GET /api/status` (결과는 5초 동안 재사용, `?refresh=true`면 바로 다시 확인)
+
 ## 설정
 
 - `config/models.yaml`: vLLM endpoint를 설정한다. `base_url`이 비어 있으면 다음처럼 동작한다.
@@ -42,7 +62,10 @@ UI 개발: `cd frontend && npm run dev`. `/api`는 `127.0.0.1:8000`으로 proxy�
 | `RAG_SOFFICE_PATH` | PATH 검색 | Office 문서를 PDF로 변환할 LibreOffice 경로. 없으면 docx/pptx/xlsx는 자체 렌더링한다 |
 | `RAG_CJK_FONT` | 시스템 검색 | 자체 렌더링(Office, 이미지)이 PDF에 넣을 한글 TrueType 폰트 경로. 비우면 맑은 고딕, 나눔고딕 등을 찾고, 없으면 포함하지 않는 CID 폰트를 쓴다 |
 | `RAG_MODELS_FILE` | `config/models.yaml` | 다른 모델 설정 파일을 쓸 때 (예: mock 서버용) |
-| `RAG_API_KEY` | 없음 | 수집 API(`/api/ingest`, `/api/openwebui/process`)와 저장 위치 변경의 Bearer 키. 비어 있으면 수집 API는 인증하지 않고, 저장 위치 변경은 서버 PC에서 접속했을 때만 허용한다. 그 밖의 화면용 API에는 적용하지 않는다 |
+| `RAG_API_KEY` | 없음 | 수집 API(`/api/ingest`, `/api/openwebui/process`), 저장 위치 변경, 문서 삭제의 Bearer 키. 비어 있으면 수집 API는 인증하지 않고, 저장 위치 변경과 문서 삭제는 서버 PC에서 접속했을 때만 허용한다. 그 밖의 화면용 API에는 적용하지 않는다 |
+| `RAG_ADMIN_HOSTS` | 없음 | "서버 PC에서 접속"으로 볼 추가 IP나 CIDR(쉼표로 구분). reverse proxy나 컨테이너 포트 공개 뒤에서 이 PC의 요청이 다른 주소로 들어올 때 쓴다 |
+| `RAG_DATA_DIR_HINT` | 없음 | 데이터 폴더가 환경 변수로 잠겨 있을 때 설정 화면에 보여 줄 안내 문구 |
+| `RAG_EVALS_DIR` | `evals/results` | VLM 평가 비교 화면이 읽는 결과 폴더 |
 | `RAG_SETTINGS_FILE` | `config/settings.local.yaml` | 저장 위치 설정 화면이 쓰는 파일. git에 올라가지 않는다 |
 | `RAG_INGEST_WAIT_SECONDS` | `3600` | Open WebUI 로더가 실행 완료를 기다리는 최대 시간. 넘으면 504를 돌려준다 |
 
@@ -104,6 +127,33 @@ reranker가 설정되어 있으면 후보를 다시 정렬한다. 결과마다 �
 
 관리자 설정 → 문서 → 콘텐츠 추출 엔진을 `External`로 바꾸고, URL에 `http://<이 서버>:8000/api/openwebui`, API 키에 `RAG_API_KEY` 값을 넣는다. 환경 변수로는 `CONTENT_EXTRACTION_ENGINE=external`, `EXTERNAL_DOCUMENT_LOADER_URL`, `EXTERNAL_DOCUMENT_LOADER_API_KEY`다. 그러면 Open WebUI에 파일을 추가할 때마다 이 서버가 파일을 받아 파이프라인을 실행하고, Open WebUI는 돌려받은 청크를 자기 지식 베이스에 넣는다. 처리 과정과 결정 근거는 이 서버 화면에서 볼 수 있다.
 
+## 오프라인 서버에 배포
+
+인터넷 없는 리눅스 서버에 앱은 Python wheel로 설치하고, 모델은 서버에 이미 있는 vLLM과 모델 서버를 쓴다. Docker는 필요 없다.
+
+- 앱: 인터넷 되는 PC에서 wheel과 빌드된 화면(`frontend/dist`)을 준비해 반입한다. 순서는 `docs/HANDOFF.md` 3-2절에 있다.
+- VLM: 이미 운영 중인 vLLM을 쓴다.
+- 임베딩과 reranker: **모델 서버**(`deploy/model-server.sh start`)로 띄운다. GPU 1장에 프로세스 하나로 두 모델을 함께 올리며, root 권한 없이 vLLM의 Python 환경에서 실행한다.
+- 모델 받기, `models.yaml` 설정, 확인, 업데이트, 백업 순서는 `deploy/README.md`에 있다.
+
+## 로컬 PC에서 실제 모델로 실행
+
+NVIDIA GPU가 있는 PC에서 Ollama(VLM `qwen2.5vl:7b`, 임베딩 `bge-m3`)와 모델 서버(reranker `BAAI/bge-reranker-v2-m3`, CPU)를 띄우고 앱을 연결한다. 모델은 약 9.5GB이고 처음 받을 때 인터넷이 필요하다.
+
+```bash
+ollama pull qwen2.5vl:7b && ollama pull bge-m3
+.venv/Scripts/pip install torch transformers          # 모델 서버용. 앱 의존성과 따로 둬도 된다
+.venv/Scripts/python deploy/model-server/server.py --rerank-model BAAI/bge-reranker-v2-m3 --device cpu --port 8090
+
+cd backend
+RAG_MODELS_FILE=../config/models.ollama.yaml ../.venv/Scripts/python -m uvicorn app.main:app --port 8000
+```
+
+- `config/models.ollama.yaml`은 Ollama 기본 포트(11434)와 모델 서버(8090)를 가리킨다. 포트가 다르면 복사본(`*.local.yaml`)을 만들어 고친다.
+- GPU 메모리가 적으면 `qwen2.5vl:3b`를 쓴다.
+- Ollama에는 `/tokenize`가 없어서 토큰 비율은 기본값 2.5를 쓴다. 이 폴백은 결정 기록에 남는다.
+- 실제 배포 대상은 vLLM이다. 이 구성은 로컬 검증용이다.
+
 ## GPU 없이 VLM 경로 확인 (mock vLLM)
 
 ```bash
@@ -137,6 +187,8 @@ mock 서버는 prompt 규약(OCR, 그림 `TYPE:` 첫 줄, 표, 분류)에 맞는
 .venv/Scripts/python scripts/make_eval_set.py          # 합성 평가 세트 생성 (evals/synthetic)
 .venv/Scripts/python scripts/eval_profile.py --labels evals/synthetic/profile_labels.json --sweep
 .venv/Scripts/python scripts/eval_retrieval.py --dataset evals/synthetic/retrieval.json
+.venv/Scripts/python scripts/eval_vlm.py --models <models.yaml> --name "<모델 이름>"   # VLM 품질, 결과는 evals/results/vlm/
+.venv/Scripts/python scripts/eval_vlm.py --cases evals/samples/cases.json --models <models.yaml> --name "<모델 이름>"   # 실제 공개 문서 10종
 ```
 
-라벨 형식, 튜닝 순서, 현재 기준선은 `evals/README.md`에 있다.
+VL 모델끼리의 결과는 앱 왼쪽 아래 **"VLM 평가 비교"**(`/#evals`)에서 나란히 비교한다. 라벨 형식, 평가 항목, 튜닝 순서, 현재 기준선은 `evals/README.md`에 있다.

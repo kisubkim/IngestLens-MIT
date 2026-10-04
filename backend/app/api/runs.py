@@ -3,7 +3,7 @@ import json
 import numpy as np
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import PlainTextResponse
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sse_starlette.sse import EventSourceResponse
 
 from ..db import session
@@ -117,6 +117,29 @@ def elements(run_id: str, page: int | None = None) -> list[dict]:
         if page is not None:
             q = q.where(Element.page == page)
         return [to_dict(e) for e in s.scalars(q)]
+
+
+@router.get("/{run_id}/element-stats")
+def element_stats(run_id: str) -> dict:
+    """Per-page element counts by type and tool, for the parse report's chart. Pages without elements are included."""
+    _run(run_id)
+    with session() as s:
+        profiles = {p.page: p for p in s.scalars(select(PageProfile).where(PageProfile.run_id == run_id))}
+        rows = s.execute(select(Element.page, Element.type, Element.source_tool, func.count(), func.sum(func.length(Element.content)))
+                         .where(Element.run_id == run_id).group_by(Element.page, Element.type, Element.source_tool)).all()
+    pages: dict[int, dict] = {p: {"page": p, "label": pr.label, "parser": pr.parser, "total": 0, "chars": 0, "by_type": {}, "by_tool": {}}
+                              for p, pr in profiles.items()}
+    by_type: dict[str, int] = {}
+    for page, typ, tool, n, chars in rows:
+        row = pages.setdefault(page, {"page": page, "label": None, "parser": None, "total": 0, "chars": 0, "by_type": {}, "by_tool": {}})
+        row["total"] += n
+        row["chars"] += chars or 0
+        row["by_type"][typ] = row["by_type"].get(typ, 0) + n
+        row["by_tool"][tool] = row["by_tool"].get(tool, 0) + n
+        by_type[typ] = by_type.get(typ, 0) + n
+    ordered = [pages[p] for p in sorted(pages)]
+    return {"total": sum(by_type.values()), "by_type": by_type, "pages": ordered,
+            "empty_pages": [p["page"] for p in ordered if not p["total"]]}
 
 
 @router.get("/{run_id}/chunks")

@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { api, pageImage, type Decision, type Element, type PageProfile } from "./api";
+import { useEffect, useMemo, useState } from "react";
+import { api, pageImage, type Decision, type Element, type ElementStats, type PageProfile } from "./api";
 import PageOverlay from "./PageOverlay";
 
 const FEATURE_LABELS: [keyof PageProfile["features"], string][] = [
@@ -19,15 +19,80 @@ function LabelBadge({ label }: { label: string }) {
   return <span className={`label-badge l-${label}`}>{label}</span>;
 }
 
+// Stacking order, bottom to top. Other types (e.g. pptx_notes) go last with a neutral color.
+const TYPE_ORDER = ["title", "text", "table", "figure"];
+const typeRank = (t: string) => (TYPE_ORDER.includes(t) ? TYPE_ORDER.indexOf(t) : TYPE_ORDER.length);
+
+function ParseStats({ stats, current, onPick }: { stats: ElementStats; current: number | null; onPick: (page: number) => void }) {
+  const max = Math.max(1, ...stats.pages.map((p) => p.total));
+  const types = Object.keys(stats.by_type).sort((a, b) => typeRank(a) - typeRank(b));
+  const vlmPages = stats.pages.filter((p) => Object.keys(p.by_tool).some((t) => t.startsWith("vlm_"))).length;
+  const step = Math.ceil(stats.pages.length / 30); // label every n-th page so numbers do not overlap
+  return (
+    <div className="chunk-stats parse-stats">
+      <div className="card stat-card">
+        <h3>파싱 결과</h3>
+        <div className="big">{stats.total} elements</div>
+        <div className="type-counts">
+          {types.map((t) => (
+            <span key={t}>
+              <span className={`type-dot t-${t}`} /> {t} {stats.by_type[t]}
+            </span>
+          ))}
+        </div>
+        <div className="muted">
+          {stats.pages.length}페이지 · 평균 {(stats.total / Math.max(1, stats.pages.length)).toFixed(1)}개/페이지
+        </div>
+        <div className="muted">VLM으로 읽은 페이지 {vlmPages}</div>
+        {stats.empty_pages.length > 0 && (
+          <div className="empty-pages">
+            element 없음:{" "}
+            {stats.empty_pages.map((p) => (
+              <button key={p} className="link" onClick={() => onPick(p)}>
+                p.{p + 1}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+      <div className="card">
+        <div className="hist-title">페이지별 element 개수 (막대를 누르면 그 페이지로 이동)</div>
+        <div className="page-bars">
+          {stats.pages.map((p) => (
+            <button
+              key={p.page}
+              className={`page-bar ${current === p.page ? "sel" : ""} ${p.total ? "" : "empty"}`}
+              onClick={() => onPick(p.page)}
+              title={`페이지 ${p.page + 1}${p.label ? ` (${p.label})` : ""}: ${p.total}개\n${Object.entries(p.by_type)
+                .map(([t, n]) => `${t} ${n}`)
+                .join(", ")}\n${Object.entries(p.by_tool)
+                .map(([t, n]) => `${t} ${n}`)
+                .join(", ")}`}
+            >
+              <span className="page-bar-n">{p.total || ""}</span>
+              <span className="page-bar-stack" style={{ height: `${(p.total / max) * 100}%` }}>
+                {Object.entries(p.by_type)
+                  .sort(([a], [b]) => typeRank(b) - typeRank(a))
+                  .map(([t, n]) => (
+                    <span key={t} className={`seg t-${t}`} style={{ flexGrow: n }} />
+                  ))}
+              </span>
+              <span className="page-bar-lab">{p.page % step === 0 || current === p.page ? p.page + 1 : ""}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function PageDetail({ runId, docId, profile, onNav }: { runId: string; docId: string; profile: PageProfile; onNav: (d: number) => void }) {
   const [elements, setElements] = useState<Element[]>([]);
   const [decisions, setDecisions] = useState<Decision[]>([]);
   const [hover, setHover] = useState<number | null>(null);
-  const root = useRef<HTMLDivElement>(null);
   const page = profile.page;
 
   useEffect(() => {
-    root.current?.scrollIntoView({ behavior: "smooth", block: "start" });
     api.elements(runId, page).then(setElements);
     api.decisions(runId, `page ${page + 1}`).then(setDecisions);
   }, [runId, page]);
@@ -46,7 +111,7 @@ function PageDetail({ runId, docId, profile, onNav }: { runId: string; docId: st
   const ev = f.evidence;
 
   return (
-    <div className="page-detail" ref={root}>
+    <div className="page-detail">
       <div className="page-detail-head">
         <button onClick={() => onNav(-1)}>←</button>
         <strong>페이지 {page + 1}</strong>
@@ -143,10 +208,20 @@ export default function ParseReport({ runId, docId }: { runId: string; docId: st
   const [pages, setPages] = useState<PageProfile[]>([]);
   const [filter, setFilter] = useState<string | null>(null);
   const [current, setCurrent] = useState<number | null>(null);
+  const [stats, setStats] = useState<ElementStats | null>(null);
 
   useEffect(() => {
-    api.pages(runId).then(setPages);
+    api.pages(runId).then((ps) => {
+      setPages(ps);
+      setCurrent((cur) => cur ?? ps[0]?.page ?? null);
+    });
+    api.elementStats(runId).then(setStats).catch(() => setStats(null));
   }, [runId]);
+
+  const pick = (page: number) => {
+    setFilter(null);
+    setCurrent(page);
+  };
 
   const counts = useMemo(() => {
     const c: Record<string, number> = {};
@@ -183,11 +258,11 @@ export default function ParseReport({ runId, docId }: { runId: string; docId: st
         </a>
       </div>
 
-      {profile && <PageDetail runId={runId} docId={docId} profile={profile} onNav={nav} />}
+      {stats && <ParseStats stats={stats} current={current} onPick={pick} />}
 
       <div className="thumb-grid">
         {shown.map((p) => (
-          <button key={p.page} className={`thumb ${current === p.page ? "sel" : ""}`} onClick={() => setCurrent(p.page)}>
+          <button key={p.page} className={`thumb ${current === p.page ? "sel" : ""}`} onClick={() => pick(p.page)}>
             <img loading="lazy" src={pageImage(docId, p.page, 40)} alt={`page ${p.page + 1}`} />
             <div className="thumb-meta">
               <span>{p.page + 1}</span>
@@ -200,6 +275,8 @@ export default function ParseReport({ runId, docId }: { runId: string; docId: st
           </button>
         ))}
       </div>
+
+      {profile && <PageDetail runId={runId} docId={docId} profile={profile} onNav={nav} />}
     </div>
   );
 }

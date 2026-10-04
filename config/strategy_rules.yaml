@@ -57,7 +57,7 @@ parse:
     min_area_ratio: 0.04        # image or drawing cluster share of the page to count as a figure
     max_per_page: 4
   captions:
-    pattern: '^(그림|표|도표|Figure|Fig\.|Table|Chart)\s*[\dIVX]+'
+    pattern: '^[\[<〈《【(]?\s*(그림|표|도표|Figure|Fig\.|Table|Chart)\s*[\dIVX]+'   # also [그림 1], <표 1>, 【그림 1】
     max_gap: 40                 # points between figure/table edge and caption
   tables:
     max_empty_cell_ratio: 0.5   # worse than this -> re-extract with the VLM

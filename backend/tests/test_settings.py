@@ -76,6 +76,25 @@ def test_update_needs_local_request_or_key(monkeypatch):
         assert res.status_code == 200 and _item(res.json(), "qdrant_url")["configured"] == "http://q:6333"
 
 
+def test_admin_hosts_treat_docker_gateway_as_local(monkeypatch):
+    """Behind Docker port publishing the host's browser arrives from the bridge gateway, not 127.0.0.1."""
+    with TestClient(app, client=("172.18.0.1", 50000)) as gateway:
+        assert gateway.get("/api/settings/storage").json()["editable_here"] is False
+        monkeypatch.setattr(settings, "admin_hosts", "10.0.0.5, 172.16.0.0/12, not-an-ip")
+        assert gateway.get("/api/settings/storage").json()["editable_here"] is True
+        assert gateway.put("/api/settings/storage", json={"qdrant_url": ""}).status_code == 200
+    with TestClient(app, client=("192.168.1.20", 50000)) as lan:
+        assert lan.put("/api/settings/storage", json={"qdrant_url": ""}).status_code == 403
+
+
+def test_locked_data_dir_shows_hint(monkeypatch):
+    monkeypatch.setattr(settings, "data_dir_hint", "Docker 볼륨으로 정한다")
+    with TestClient(app, client=LOCAL) as client:
+        items = client.get("/api/settings/storage").json()["items"]
+    assert _item({"items": items}, "data_dir")["hint"] == "Docker 볼륨으로 정한다"
+    assert _item({"items": items}, "db_url")["hint"] == ""
+
+
 def test_document_paths_are_relative(sample_pdf):
     with TestClient(app) as client:
         with sample_pdf.open("rb") as f:

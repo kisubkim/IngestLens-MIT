@@ -103,10 +103,18 @@ async def _prepare(workers: int, *args) -> dict[int, dict]:
 
 
 async def _run_jobs(vlm: VLMClient, preps: dict[int, dict], stats: Counter) -> None:
+    first_limit = vlm.cfg.get("max_tokens", 2048)
+    retry_limit = vlm.cfg.get("max_tokens_retry", first_limit * 2)
+
     async def one(job: dict) -> None:
         stats["vlm_image_bytes"] += len(job["image"])
         try:
             job["result"] = await vlm.ask(job["image"], PROMPTS[job["kind"]])
+            # A long page or table hit the answer limit: ask once more with a bigger limit instead of losing the tail.
+            if job["result"].finish_reason == "length" and retry_limit > first_limit:
+                first = job["result"]
+                job["result"] = await vlm.ask(job["image"], PROMPTS[job["kind"]], max_tokens=retry_limit)
+                job["retry"] = {"max_tokens": first_limit, "retry_max_tokens": retry_limit, "first_seconds": first.seconds}
         except Exception as e:  # recorded per page during merge; the run continues
             job["error"] = f"{type(e).__name__}: {e}"
         finally:
@@ -124,6 +132,16 @@ def _merge(run_id: str, page: int, label: str, prep: dict, pcfg: dict, stats: Co
             stats["vlm_errors"] += 1
         else:
             stats["vlm_seconds_x100"] += int(res.seconds * 100)
+            if job.get("retry"):
+                stats["vlm_retried"] += 1
+                stats["vlm_seconds_x100"] += int(job["retry"]["first_seconds"] * 100)
+                still = res.finish_reason == "length"
+                record_decision(run_id, STEP, f"page {page + 1}", f"VLM {job['kind']} retried with max_tokens {job['retry']['retry_max_tokens']}",
+                                rule_id="vlm_truncated_retry", inputs={**job["retry"], "kind": job["kind"], "truncated_again": still},
+                                alternatives=[{"choice": "keep truncated answer", "reason_rejected": "the end of the page or table would be lost"}],
+                                confidence=0.5 if still else 0.8,
+                                reasoning="The first answer stopped at max_tokens (finish_reason=length), so the same request was sent "
+                                          "once more with a larger limit." + (" It was truncated again." if still else ""))
             if res.finish_reason == "length":
                 stats["vlm_truncated"] += 1
                 emit_event(run_id, "warning", STEP, f"page {page + 1}: VLM {job['kind']} answer truncated at max_tokens")
@@ -304,6 +322,7 @@ async def parse(state: PipelineState) -> dict:
         "vlm_calls": stats["vlm_calls"],
         "vlm_errors": stats["vlm_errors"],
         "vlm_truncated": stats["vlm_truncated"],
+        "vlm_retried": stats["vlm_retried"],
         "vlm_avg_seconds": round(stats["vlm_seconds_x100"] / 100 / calls_ok, 2) if calls_ok else None,
         "figure_regions": stats["figure_regions"],
         "figures_described": stats["figures_described"],

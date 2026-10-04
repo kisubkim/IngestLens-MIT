@@ -1,9 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, type Doc } from "./api";
 import RunView from "./RunView";
+import EvalView from "./EvalView";
+import HomeView from "./HomeView";
+import StatusView, { StatusBadge, useBackendStatus } from "./StatusView";
 import SettingsView from "./SettingsView";
 
 const ACCEPT_EXT = [".pdf", ".doc", ".docx", ".ppt", ".pptx", ".xls", ".xlsx", ".hwp", ".png", ".jpg", ".jpeg", ".tif", ".tiff"];
+
+type Panel = "doc" | "settings" | "evals" | "status";
+const HASH_PANELS = ["#evals", "#settings", "#status"];
 
 function fmtSize(bytes: number) {
   return bytes >= 2 ** 20 ? `${(bytes / 2 ** 20).toFixed(1)} MB` : `${Math.ceil(bytes / 1024)} KB`;
@@ -30,7 +36,12 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   // Documents added by upload that wait for "순서대로 실행", in upload order.
   const [pending, setPending] = useState<string[]>([]);
-  const [showSettings, setShowSettings] = useState(false);
+  // #evals and #settings open those screens directly, so they can be linked and bookmarked.
+  const [panel, setPanel] = useState<Panel>(() => (HASH_PANELS.includes(location.hash) ? (location.hash.slice(1) as Panel) : "doc"));
+  const backend = useBackendStatus();
+  useEffect(() => {
+    history.replaceState(null, "", panel === "doc" ? location.pathname : `#${panel}`);
+  }, [panel]);
   const fileInput = useRef<HTMLInputElement>(null);
   const dragDepth = useRef(0);
 
@@ -48,7 +59,7 @@ export default function App() {
   }, [active, refresh]);
 
   const select = (d: Doc) => {
-    setShowSettings(false);
+    setPanel("doc");
     setSelected(d);
     setRunId(d.latest_run?.id ?? null);
   };
@@ -79,6 +90,24 @@ export default function App() {
     }
   };
 
+  const remove = async () => {
+    if (!selected) return;
+    const ok = window.confirm(
+      `"${selected.filename}"을(를) 삭제합니다.\n\n올린 원본, 변환 PDF, 페이지 이미지, 모든 실행 기록과 파싱·청크 결과, 임베딩 벡터가 함께 지워지며 되돌릴 수 없습니다.`,
+    );
+    if (!ok) return;
+    setError(null);
+    try {
+      await api.deleteDocument(selected.id);
+      setPending((prev) => prev.filter((id) => id !== selected.id));
+      setSelected(null);
+      setRunId(null);
+      await refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  };
+
   const start = async () => {
     if (!selected) return;
     setError(null);
@@ -100,7 +129,7 @@ export default function App() {
       setPending([]);
       await refresh();
       const first = docs.find((d) => d.id === runs[0].document_id);
-      setShowSettings(false);
+      setPanel("doc");
       if (first) setSelected(first);
       setRunId(runs[0].id);
     } catch (e) {
@@ -132,7 +161,13 @@ export default function App() {
           upload(Array.from(e.dataTransfer.files));
         }}
       >
-        <h1>IngestLens</h1>
+        <h1 className="home-link" title="첫 화면(임베딩 DB 현황)" onClick={() => {
+          setPanel("doc");
+          setSelected(null);
+          setRunId(null);
+        }}>
+          IngestLens
+        </h1>
         <button className="primary" disabled={busy} onClick={() => fileInput.current?.click()}>
           {busy ? `업로드 중… ${uploading}개` : "문서 업로드"}
         </button>
@@ -169,25 +204,48 @@ export default function App() {
           ))}
           {!docs.length && <li className="empty">업로드된 문서가 없습니다.</li>}
         </ul>
-        <button className={showSettings ? "settings-link active" : "settings-link"} onClick={() => setShowSettings(true)}>
+        <StatusBadge overall={backend.overall} active={panel === "status"} onClick={() => setPanel("status")} />
+        <button className={panel === "evals" ? "settings-link active" : "settings-link"} onClick={() => setPanel("evals")}>
+          VLM 평가 비교
+        </button>
+        <button className={panel === "settings" ? "settings-link active" : "settings-link"} onClick={() => setPanel("settings")}>
           저장 위치 설정
         </button>
       </aside>
 
       <main className="main">
         {error && <div className="error-box">{error}</div>}
-        {showSettings && <SettingsView />}
-        {!showSettings && !selected && <div className="placeholder">왼쪽에서 문서를 선택하거나 업로드하세요.</div>}
-        {!showSettings && selected && (
+        {panel === "settings" && (
+          <SettingsView
+            docCount={docs.length}
+            onCleared={() => {
+              setSelected(null);
+              setRunId(null);
+              setPending([]);
+              refresh();
+            }}
+          />
+        )}
+        {panel === "evals" && <EvalView />}
+        {panel === "status" && <StatusView state={backend} />}
+        {panel === "doc" && !selected && (
+          <HomeView version={docs.map((d) => `${d.id}:${d.latest_run?.status ?? ""}`).join(",")} onOpen={select} />
+        )}
+        {panel === "doc" && selected && (
           <>
             <header className="doc-header">
               <div>
                 <h2>{selected.filename}</h2>
                 <span className="muted">{fmtSize(selected.size)}</span>
               </div>
-              <button className="primary" onClick={start}>
-                {runId ? "다시 실행" : "파이프라인 실행"}
-              </button>
+              <div className="header-actions">
+                <button className="danger" onClick={remove}>
+                  문서 삭제
+                </button>
+                <button className="primary" onClick={start}>
+                  {runId ? "다시 실행" : "파이프라인 실행"}
+                </button>
+              </div>
             </header>
             {runId ? (
               <RunView key={runId} runId={runId} documentId={selected.id} onFinished={refresh} />

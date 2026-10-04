@@ -24,6 +24,11 @@ build/
 # 실행 데이터. RAG_DATA_DIR 기본값(./data)에 업로드 원본, 변환 PDF,
 # 페이지 이미지 캐시, SQLite(rag.db), 내장 Qdrant 가 쌓인다.
 data/
+deploy/data/
+deploy/models/
+deploy/model-server.env
+deploy/model-server.pid
+deploy/model-server.log
 *.db
 *.db-journal
 *.db-wal
