@@ -8,8 +8,10 @@
 |---|---|
 | PyMuPDF 제거, MIT 전환 | 완료 (2026-10-04). 커밋 `bf70559` |
 | GitHub 저장소 연결, push | 완료. https://github.com/kisubkim/IngestLens-MIT (`main`) |
-| 원본 IngestLens의 새 기능 반영 | 완료. 2026-10-05에 `19aab24`까지, 2026-10-08에 main `ffb962c`까지. Docker·Singularity 이미지 관련 부분은 제외 |
-| 실제 문서로 PDF 처리 결과 비교 | 실제 공개 문서 10종과 합성 VLM 세트를 실제 모델(`qwen2.5vl:7b`)로 비교함(2절) |
+| 원본 IngestLens의 새 기능 반영 | 완료. 2026-10-05에 `19aab24`까지(커밋 `073aef2`), 2026-10-08에 main `ffb962c`까지(`ae65ead`). Docker·Singularity 이미지 관련 부분은 제외 |
+| 원본 `webui` 브랜치 반영 | 완료 (2026-10-08). `d525d4a`까지를 이 저장소 main에(`c277b7e`). Open WebUI 쪽 이미지 필터와 청크 미리보기 API |
+| 실제 문서로 PDF 처리 결과 비교 | 실제 공개 문서 10종과 합성 VLM 세트를 실제 모델(`qwen2.5vl:7b`)로 비교함. 두 세트 모두 원본과 같은 점수(2-3절) |
+| 남은 큰 확인 | Linux 서버에서 이 버전 실행, 운영 GPU의 모델 서버, 이 버전으로 실제 Open WebUI 연동(3절) |
 
 ## 2. 완료한 것
 
@@ -96,8 +98,9 @@ MIT 버전에 맞게 고친 것:
 1. **원본 IngestLens에도 "잘린 표 답은 원래 표 유지" 수정을 알린다**: 원본도 같은 약점이 있다(이번 원본 결과의 통과는 7b가 우연히 성공했거나 3b가 오류로 끝난 덕분이다).
 2. **Linux 서버 확인**: 이 버전(새 PDF 라이브러리)은 Linux에서 돌려 본 적이 없다. 한글 TrueType 폰트(`fonts-nanum`) 설치, "office font" 결정이 `font_system`/`font_configured`인지, 프로세스 풀 동작.
 3. **모델 서버 실제 운영 GPU 확인**: Exclusive_Process 모드에서 `./model-server.sh status`로 GPU 프로세스가 1개인지.
-4. **원본 IngestLens와 계속 맞추기**: 원본에 기능이 더 생기면 같은 방식(3-way 적용 → PyMuPDF 사용처 교체 → Docker 이미지 부분 제외)으로 반영한다. 이번 반영 기준은 원본 `19aab24`다.
-5. **필요하면 git 이력 정리**: 첫 커밋 `6b6c37b`에 AGPL 전문과 PyMuPDF 코드가 남아 있다. 지금도 문제는 없지만, 이력에서 빼고 싶으면 커밋을 합친다(force push 필요).
+4. **원본 IngestLens와 계속 맞추기**: 원본에 기능이 더 생기면 같은 방식으로 반영한다: `git fetch ../IngestLens <브랜치>` → `git diff --binary --no-textconv`로 3-way 적용 → PyMuPDF 사용처 교체 → Docker·Singularity 이미지 부분 제외 → 원본과 파일 단위 대조. 지금 반영 기준은 원본 main `ffb962c`와 `webui` `d525d4a`다.
+5. **이 버전으로 실제 Open WebUI 연동 시험**: 원본에서는 Open WebUI v0.11.3으로 파일 추가부터 답변, 쪽 이미지 필터까지 확인했다. 이 저장소는 API 형식이 같아 그대로 동작할 것으로 보지만 직접 붙여 보지는 않았다(`deploy/OPENWEBUI.md`).
+6. **필요하면 git 이력 정리**: 첫 커밋 `6b6c37b`에 AGPL 전문과 PyMuPDF 코드가 남아 있다. 지금도 문제는 없지만, 이력에서 빼고 싶으면 커밋을 합친다(force push 필요).
 
 ## 4. 막혔던 문제와 해결
 
@@ -118,4 +121,5 @@ MIT 버전에 맞게 고친 것:
 
 - `CLAUDE.md`와 한글 번역본 `CLAUDE_KR.md`는 `.git/info/exclude`에 넣어 커밋하지 않는다.
 - venv(`.venv`)에는 PyMuPDF가 없다. `pip install -r backend/requirements-dev.txt`로 새 의존성이 설치된다.
-- 원본 IngestLens는 `../IngestLens`에 있다. 이 저장소에 `upstream-local/main`으로 가져와(fetch) 비교했다.
+- 원본 IngestLens는 `../IngestLens`에 있다. 이 저장소에 `upstream-local/main`, `upstream-local/webui`로 가져와(fetch) 비교한다. 원본 작업 폴더의 커밋되지 않은 변경은 반영하지 않는다.
+- 원본 쪽 Docker 스택(Ollama 11435, reranker 8081)이 켜져 있으면 실제 모델 평가에 주소로만 빌려 쓸 수 있다(재시작하거나 바꾸지 않는다). 설정 사본은 `config/models.ollama.yaml`에서 포트만 바꿔 만든다.
