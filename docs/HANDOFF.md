@@ -29,7 +29,7 @@
 
 | 항목 | 검증 방법 | 실제 환경 검증 |
 |---|---|---|
-| 파이프라인 전체, UI 6개 탭, 여러 파일 순차 실행, HTTP 수집 API, 저장 위치 설정, VLM 평가 비교, 첫 화면, 상태 표시, 삭제 | 백엔드 테스트 64개, 화면 빌드, 8010 포트 서버로 상태·현황·평가 목록·삭제 API 확인 | 개발 PC(Windows)에서만. 원본은 오프라인 서버에서 사용자가 앱을 실행해 봤고(2026-10-06), 그때 찾은 "문서 하나 삭제가 관리자 키 없이 401" 버그의 수정도 반영했다 |
+| 파이프라인 전체, UI 6개 탭, 여러 파일 순차 실행, HTTP 수집 API, 저장 위치 설정, VLM 평가 비교, 첫 화면, 상태 표시, 삭제 | 백엔드 테스트 65개, 화면 빌드, 8010 포트 서버로 상태·현황·평가 목록·삭제 API 확인 | 개발 PC(Windows)에서만. 원본은 오프라인 서버에서 사용자가 앱을 실행해 봤고(2026-10-06), 그때 찾은 "문서 하나 삭제가 관리자 키 없이 401" 버그의 수정도 반영했다 |
 | VLM (OCR, 그림, 표, 분류) | 코드 mock, HTTP mock, **Ollama `qwen2.5vl:7b`** (원본 IngestLens의 Docker 스택, 2026-10-04) | 실제 VL 모델로 응답 형식 확인: `TYPE:` 첫 줄, OCR 제목 분리, 차트 표, 분류 JSON 모두 동작. 합성 세트에서 7b 92%·3b 86%, 실제 공개 문서 10종에서 7b 92%·3b 51%(7절). **vLLM과 큰 모델로는 아직 안 함** |
 | 임베딩 | dev-hash, mock HTTP, **Ollama `bge-m3`** | 합성 세트로 측정(7절). vLLM으로는 안 함 |
 | reranker | mock HTTP, **원본 IngestLens의 rerank 서버(sentence-transformers CrossEncoder, `bge-reranker-v2-m3`)**, 모델 서버(`deploy/model-server/server.py`) | 합성 세트로 측정(7절). vLLM `/v1/rerank`로는 안 함 |
@@ -40,7 +40,7 @@
 | PDF 라이브러리 교체(MIT 전환) | 테스트, 같은 합성 PDF에서 PyMuPDF 결과와 feature·라벨 비교(라벨 전부 일치), 벤치마크, 6개 형식 수집, **실제 모델(`qwen2.5vl:7b`)로 원본과 같은 입력 PDF 평가**(7절) | 합성 VLM 세트, 실제 공개 문서 10종 모두 원본과 같은 점수, 페이지별 체크도 같다(열린 표 보정, 잘린 표 답 처리 후). 다단 문서의 읽기 순서와 회전 페이지는 아직 실제 문서로 안 봤다 |
 | 150MB 대용량 | 합성 PDF (노이즈 이미지) + mock VLM | 실제 문서, 실제 VLM으로 측정 안 함 |
 | Linux(운영 서버) | 원본 IngestLens(PyMuPDF)는 Docker 이미지(python:3.12-slim)로 프로세스 풀 fork까지 확인 | **이 저장소(새 PDF 라이브러리)는 Linux에서 실행해 본 적 없음** |
-| Open WebUI 연동 | 원본에서 Open WebUI v0.11.3 컨테이너로 확인 | 파일 추가 → IngestLens 처리 → 지식 베이스 → LLM 답변과 출처(쪽 번호)까지 확인(`deploy/OPENWEBUI.md`). 이 저장소로는 다시 시험하지 않았다(응답 형식은 같다) |
+| Open WebUI 연동 | 원본에서 Open WebUI v0.11.3 컨테이너로 확인 | 파일 추가 → IngestLens 처리 → 지식 베이스 → LLM 답변과 출처(쪽 번호)까지 확인(`deploy/OPENWEBUI.md`). 원본 `webui` 브랜치에서 쪽 이미지 필터로 답변의 썸네일 줄과 출처 팝업 이미지까지 가로·세로 문서로 화면에서 확인(10절) 이 저장소로는 다시 시험하지 않았다(응답 형식은 같다) |
 
 ---
 
@@ -51,13 +51,13 @@ IngestLens/
   backend/app/
     agents/     intake, profiler, strategy, parser, chunker, embedder, retriever (+ common)
     graph/      pipeline.py: LangGraph 정의, 실행/취소
-    api/        documents(삭제 포함), runs(이벤트·SSE·결정·페이지·요소·청크·임베딩·이웃), search, ingest(외부 수집·Open WebUI 로더), settings(저장 위치), evals(VLM 평가 결과), status(백엔드 상태), overview(첫 화면 현황), auth
+    api/        chunks(청크 영역 칠한 쪽 이미지), documents(삭제 포함), runs(이벤트·SSE·결정·페이지·요소·청크·임베딩·이웃), search, ingest(외부 수집·Open WebUI 로더), settings(저장 위치), evals(VLM 평가 결과), status(백엔드 상태), overview(첫 화면 현황), auth
     tools/      pdf(읽기·렌더), pdfgen(쓰기·한글 폰트), figures, office, office_native, vlm, vlm_output, vlm_checks, embedding, reranker, lexical, chunking, vectorstore, purge
     models.py   Document, Run, Event, Decision, PageProfile, Element, Chunk
     events.py   emit_event / record_decision + SSE fan-out
-  backend/tests/   pytest 64개 (conftest의 합성 PDF, office_fixtures)
+  backend/tests/   pytest 65개 (conftest의 합성 PDF, office_fixtures)
   config/     models.yaml (모델 endpoint 템플릿), models.ollama.yaml (개발 PC의 Ollama + 모델 서버), strategy_rules.yaml (모든 규칙과 파라미터)
-  deploy/     오프라인 설치 안내(README.md), Open WebUI 연동 가이드(OPENWEBUI.md), 모델 서버(model-server/server.py, model-server.sh), 운영용 models.yaml 템플릿
+  deploy/     오프라인 설치 안내(README.md), Open WebUI 연동 가이드(OPENWEBUI.md), Open WebUI 쪽 이미지 필터(openwebui_page_images.py), 모델 서버(model-server/server.py, model-server.sh), 운영용 models.yaml 템플릿
   frontend/   React + Vite. build 결과물 dist/는 FastAPI가 / 경로로 서빙
   scripts/    mock_vllm, bench_large, make_eval_set, eval_profile, eval_retrieval, make_vlm_set, make_sample_set, eval_vlm, _inproc
   evals/      synthetic/ (합성 평가 세트), vlm/ (합성 VLM 평가 세트), samples/ (실제 공개 문서 10종, 출처는 SOURCES.md), reports/ (측정 보고서), results/vlm/ (VLM 평가 결과 JSON, 화면에서 비교), README.md
@@ -169,6 +169,8 @@ Open WebUI 서버에서 이 서버의 포트(기본 8000)에 접속할 수 있�
 **오류 응답**: 지원하지 않는 형식 등으로 실행이 실패하면 502이고 detail에 실행 오류가 들어간다. 대기 시간을 넘기면 504, 빈 파일은 400이다. Open WebUI에는 파일 처리 실패로 보인다.
 
 **Open WebUI의 임베딩·rerank도 모델 서버에 맡길 때**(GPU 프로세스 1개 공유): `deploy/README.md` 8절. 원본에서 2026-10-07 Open WebUI v0.11.3으로 실제 연결을 검증했다: 파일 추가 → IngestLens 처리 → 지식 베이스 → LLM 답변과 출처까지(`deploy/OPENWEBUI.md`).
+
+**답변에 쪽 이미지 보여주기**(원본 `webui` 브랜치에서 가져옴, 2026-10-08): Open WebUI 필터 함수 `deploy/openwebui_page_images.py`가 출처 메타데이터의 `chunk_id`로 `GET /api/chunks/{id}/preview.png`(청크 영역을 칠한 쪽 이미지)를 답변의 썸네일 줄(임베드, 누르면 펼침)과 출처 팝업에 넣는다. 설치는 `deploy/OPENWEBUI.md` 10절.
 
 범용 HTTP 수집(`POST /api/ingest`, multipart, 등록만 하고 바로 응답)은 README "HTTP 수집 API"를 본다.
 
@@ -324,6 +326,7 @@ Open WebUI 서버에서 이 서버의 포트(기본 8000)에 접속할 수 있�
 - **Open WebUI는 출처의 `page`를 0부터로 보고 +1 해서 보여준다**(LangChain PDF 로더 규약): 그래서 `/api/openwebui/process`는 `page`를 0부터, `page_label`과 `pages`는 1부터 보낸다. 2026-10-07 전에는 1부터 보내서 쪽 번호가 1씩 크게 보였다.
 - **환경 변수로 정한 데이터 폴더는 화면에서 잠긴다**: 왜 잠겼는지 화면에 보여 주려면 `RAG_DATA_DIR_HINT`에 문구를 넣는다(원본 IngestLens에서는 Docker 볼륨 안내에 썼다).
 - **모델 서버는 요청의 `model`이 자기 이름(`--embed-name`, `--rerank-name`, 기본은 모델 폴더 이름)과 다르면 거절한다**. 모델을 바꿀 때 `model-server.env`와 `models.yaml`의 `model`을 함께 바꾼다.
+- **Open WebUI 0.11 필터에서 답변에 무언가를 붙일 때**: 화면은 `content`가 아니라 `output` 항목에서 그린다(`content`만 고치면 저장은 되지만 안 보인다). 필터가 고친 `sources`는 저장되지 않으므로 출처는 `__event_emitter__`의 `source` 이벤트로 넣는다. HTML 주석과 `<img>`는 글자로 보이고, Markdown 이미지는 원래 크기로 그려지며 눌렀을 때의 미리보기도 원래 크기까지만 커진다. 그래서 쪽 썸네일은 `embeds` 이벤트(iframe, 높이는 `postMessage({type: "iframe:height"})`)로 넣었다.
 - **임베딩 화면의 점 겹침**: 비슷한 청크(dev-hash)는 같은 좌표에 모인다. 범례의 개수로 확인한다.
 
 ---

@@ -7,7 +7,7 @@ from fastapi.staticfiles import StaticFiles
 from sqlalchemy import update
 
 from .agents.parser import shutdown_pool
-from .api import documents, evals, ingest, overview, runs, search, settings as settings_api, status
+from .api import chunks, documents, evals, ingest, overview, runs, search, settings as settings_api, status
 from .config import ROOT
 from .db import init_db, session
 from .events import bus
@@ -36,6 +36,7 @@ app.include_router(settings_api.router)
 app.include_router(evals.router)
 app.include_router(status.router)
 app.include_router(overview.router)
+app.include_router(chunks.router)
 
 
 @app.get("/api/health")

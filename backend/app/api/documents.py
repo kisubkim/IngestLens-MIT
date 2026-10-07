@@ -169,7 +169,7 @@ async def page_image(doc_id: str, page: int, dpi: int = 96) -> FileResponse:
     d = _doc(doc_id)
     if not d.pdf_path:
         raise HTTPException(409, "document not converted yet; start a run first")
-    dpi = max(36, min(dpi, 300))
+    dpi = max(18, min(dpi, 300))
     out = settings.data_dir / "pages" / doc_id / f"{page}_{dpi}.png"
     if not out.exists():
         try:

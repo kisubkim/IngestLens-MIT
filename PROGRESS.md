@@ -80,6 +80,17 @@ MIT 버전에 맞게 고친 것:
 
 검증: 테스트 64개 통과, 화면 빌드 통과.
 
+### 2-5. 원본 `webui` 브랜치 반영 (2026-10-08)
+
+원본 IngestLens의 `webui` 브랜치(main `ffb962c` 위 커밋 4개, 끝 `d525d4a`)를 이 저장소의 main에 넣었다.
+
+- **청크 영역을 칠한 쪽 이미지 API** `GET /api/chunks/{id}/preview.png`(`page`, `dpi`, `highlight=false`). 문서를 지우면 캐시도 함께 지워진다. 원본은 PyMuPDF로 페이지에 사각형을 그려 렌더했는데, 여기서는 PDFium으로 렌더한 이미지에 Pillow로 반투명 사각형을 칠한다(PDF는 바꾸지 않는다). 테스트도 Pillow 비교로 바꿨다.
+- **Open WebUI 쪽 이미지 필터** `deploy/openwebui_page_images.py`: 답변 아래 썸네일 줄(누르면 펼치고 접음)과 출처 팝업에 그 쪽 이미지를 보여준다. 가이드는 `deploy/OPENWEBUI.md` 10절.
+- 쪽 이미지 해상도 하한을 18 dpi로 낮췄다(썸네일용).
+- HANDOFF(검증 수준, 폴더 지도, Open WebUI 필터 함정). 원본 PROGRESS는 가져오지 않았다.
+
+검증: 테스트 65개 통과(청크 미리보기 테스트 포함), 칠한 이미지를 눈으로 확인. 실제 Open WebUI에 필터를 붙여 보는 것은 원본에서만 했다.
+
 ## 3. 다음에 할 일
 
 1. **원본 IngestLens에도 "잘린 표 답은 원래 표 유지" 수정을 알린다**: 원본도 같은 약점이 있다(이번 원본 결과의 통과는 7b가 우연히 성공했거나 3b가 오류로 끝난 덕분이다).
