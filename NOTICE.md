@@ -102,7 +102,10 @@ Vite가 개발 의존성으로 받는 `lightningcss` 1.33.0은 MPL-2.0이다. �
 | [BAAI/bge-m3](https://huggingface.co/BAAI/bge-m3) | 임베딩 | MIT |
 | [BAAI/bge-reranker-v2-m3](https://huggingface.co/BAAI/bge-reranker-v2-m3) | rerank | Apache-2.0 |
 | [Qwen/Qwen2.5-VL-7B-Instruct](https://huggingface.co/Qwen/Qwen2.5-VL-7B-Instruct) | VLM | Apache-2.0 |
+| [Qwen/Qwen2.5-VL-3B-Instruct](https://huggingface.co/Qwen/Qwen2.5-VL-3B-Instruct) | VLM 평가 비교에만 사용(`evals/results/vlm/`) | **Qwen Research License: 비상업(연구·평가) 전용.** 상업 서비스에 쓰려면 Alibaba Cloud의 별도 허가가 필요하다 |
 
 모델 서버(`deploy/model-server/server.py`)는 이 저장소의 코드(MIT)이고, GPU 서버의 vLLM Python 환경에 이미 있는 torch(BSD-3-Clause), transformers(Apache-2.0), fastapi(MIT), uvicorn(BSD-3-Clause)을 쓴다. 앱의 `requirements.txt`에는 들어 있지 않다.
 
-LibreOffice는 선택 설치다. 문서 변환에 쓸 때만 필요하며 [MPL-2.0](https://www.libreoffice.org/about-us/licenses/)이다. Ollama를 개발 PC에서 쓰는 경우에도 그 프로그램과 받아 둔 모델의 라이선스를 따로 따른다.
+LibreOffice는 선택 설치다. 문서 변환에 쓸 때만 필요하며 [MPL-2.0](https://www.libreoffice.org/about-us/licenses/)이다. Ollama를 개발 PC에서 쓰는 경우에도 그 프로그램과 받아 둔 모델의 라이선스를 따로 따른다. Ollama 자체는 MIT다.
+
+운영 VLM(예: Qwen3-VL), vLLM, Open WebUI는 이 저장소와 HTTP로만 통신하는 별도 프로그램이다. 각자의 라이선스를 따른다.

@@ -121,11 +121,13 @@ reranker가 설정되어 있으면 후보를 다시 정렬한다. 결과마다 �
   curl -H "Authorization: Bearer $KEY" -F files=@a.pdf -F files=@b.docx http://localhost:8000/api/ingest
   ```
 
-- `PUT /api/openwebui/process`: Open WebUI의 External 문서 로더 규약. 본문은 파일 바이트, 파일 이름은 `X-Filename` 헤더(URL 인코딩)로 받는다. 실행이 끝날 때까지 기다렸다가 청크를 `[{page_content, metadata}]`로 돌려준다. metadata에는 `source`, `document_id`, `run_id`, `chunk_id`, `page`(1부터), `pages`, `section`, `element_types`가 들어간다. 실행이 실패하면 502, 기다리는 시간이 `RAG_INGEST_WAIT_SECONDS`를 넘으면 504를 돌려준다.
+- `PUT /api/openwebui/process`: Open WebUI의 External 문서 로더 규약. 본문은 파일 바이트, 파일 이름은 `X-Filename` 헤더(URL 인코딩)로 받는다. 실행이 끝날 때까지 기다렸다가 청크를 `[{page_content, metadata}]`로 돌려준다. metadata에는 `source`, `document_id`, `run_id`, `chunk_id`, `page`(0부터, LangChain PDF 로더와 같아서 Open WebUI가 +1 해서 보여준다), `page_label`(1부터), `pages`(1부터, 쉼표 구분), `section`, `element_types`가 들어간다. 실행이 실패하면 502, 기다리는 시간이 `RAG_INGEST_WAIT_SECONDS`를 넘으면 504를 돌려준다.
 
 ### Open WebUI 설정
 
 관리자 설정 → 문서 → 콘텐츠 추출 엔진을 `External`로 바꾸고, URL에 `http://<이 서버>:8000/api/openwebui`, API 키에 `RAG_API_KEY` 값을 넣는다. 환경 변수로는 `CONTENT_EXTRACTION_ENGINE=external`, `EXTERNAL_DOCUMENT_LOADER_URL`, `EXTERNAL_DOCUMENT_LOADER_API_KEY`다. 그러면 Open WebUI에 파일을 추가할 때마다 이 서버가 파일을 받아 파이프라인을 실행하고, Open WebUI는 돌려받은 청크를 자기 지식 베이스에 넣는다. 처리 과정과 결정 근거는 이 서버 화면에서 볼 수 있다.
+
+Open WebUI의 임베딩과 rerank도 IngestLens와 같은 모델 서버(bge-m3, bge-reranker-v2-m3)에 맡길 수 있다. 그러면 GPU 프로세스 1개를 두 시스템이 함께 쓰고, 임베딩도 일치한다. 환경 변수와 관리자 화면 설정은 `deploy/README.md` 8절에 있다. Open WebUI 0.11.x에서 파일 추가부터 LLM 답변까지 연결하는 전체 가이드는 `deploy/OPENWEBUI.md`에 있다.
 
 ## 오프라인 서버에 배포
 

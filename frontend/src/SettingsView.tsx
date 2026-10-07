@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api, type StorageItem, type StorageKey, type StorageState } from "./api";
+import { adminKey, api, type StorageItem, type StorageKey, type StorageState } from "./api";
 
 const SOURCE_LABEL: Record<StorageItem["source"], string> = {
   env: "환경 변수",
@@ -24,7 +24,7 @@ function fmtBytes(bytes: number | null) {
 export default function SettingsView({ docCount, onCleared }: { docCount: number; onCleared: () => void }) {
   const [state, setState] = useState<StorageState | null>(null);
   const [draft, setDraft] = useState<Partial<Record<StorageKey, string>>>({});
-  const [apiKey, setApiKey] = useState("");
+  const [apiKey, setApiKey] = useState(() => adminKey.get());
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
@@ -47,6 +47,7 @@ export default function SettingsView({ docCount, onCleared }: { docCount: number
     setSaved(false);
     try {
       setState(await api.updateStorage(draft, apiKey || undefined));
+      adminKey.set(apiKey);
       setDraft({});
       setSaved(true);
     } catch (e) {
@@ -66,6 +67,7 @@ export default function SettingsView({ docCount, onCleared }: { docCount: number
     setCleared(null);
     try {
       const r = await api.deleteAll(apiKey || undefined);
+      adminKey.set(apiKey);
       setCleared(`문서 ${r.documents}개, 실행 ${r.runs}개, 청크 ${r.chunks}개를 삭제했습니다.`);
       onCleared();
       await load();

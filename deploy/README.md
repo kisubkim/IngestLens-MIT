@@ -138,7 +138,89 @@ curl http://localhost:8000/api/health        # {"ok": true, ...}
 - **되돌리기:** 이전 소스와 그 wheelhouse로 같은 순서를 밟는다. 새 버전이 DB에 컬럼을 추가했어도 nullable이라 이전 버전이 읽을 수 있다.
 - **백업:** 앱을 멈춘 뒤 `RAG_DATA_DIR` 폴더를 통째로 복사한다.
 
-## 8. 라이선스
+## 8. Open WebUI와 모델 서버 함께 쓰기 (선택)
+
+> 파일 추가 → IngestLens 처리 → 지식 베이스 → LLM 답변까지 연결하는 전체 순서, 실제 시험 결과, 문제 해결은 **`OPENWEBUI.md`**에 있다. 이 절은 모델 서버 공유 설정만 요약한다.
+
+Open WebUI도 임베딩과 reranker를 4절의 모델 서버에 맡기면 다음과 같이 된다.
+- GPU 프로세스는 모델 서버 1개로 유지된다.
+- Open WebUI는 GPU가 필요 없는 일반 이미지로 돈다.
+- IngestLens와 Open WebUI가 같은 bge-m3로 임베딩하므로 결과가 일치한다.
+
+```
+GPU 1장 ── 모델 서버 (프로세스 1개: bge-m3 + bge-reranker-v2-m3, 포트 8090)
+              ▲                                   ▲
+   IngestLens (models.yaml)            Open WebUI (아래 환경 변수, GPU 없는 이미지)
+```
+
+### 8-1. Open WebUI 환경 변수
+
+`<모델 서버>`는 4절의 서버 주소다. Open WebUI가 같은 서버의 Docker에서 돌면 `host.docker.internal`이다(이때 `extra_hosts: host.docker.internal:host-gateway`가 필요하다).
+
+```bash
+# 임베딩: 모델 서버의 /v1/embeddings (OpenAI 형식)
+RAG_EMBEDDING_ENGINE=openai
+RAG_OPENAI_API_BASE_URL=http://<모델 서버>:8090/v1
+RAG_OPENAI_API_KEY=EMPTY                    # model-server.env 에 API_KEY 를 정했다면 같은 값
+RAG_EMBEDDING_MODEL=bge-m3                  # model-server.env 의 EMBED_NAME
+
+# rerank: 모델 서버의 /v1/rerank. rerank는 hybrid 검색일 때만 쓰인다
+ENABLE_RAG_HYBRID_SEARCH=true
+RAG_RERANKING_ENGINE=external
+RAG_EXTERNAL_RERANKER_URL=http://<모델 서버>:8090/v1/rerank   # 경로까지 전부 적는다(Open WebUI가 붙이지 않는다)
+RAG_EXTERNAL_RERANKER_API_KEY=EMPTY
+RAG_RERANKING_MODEL=bge-reranker-v2-m3      # model-server.env 의 RERANK_NAME
+
+# 문서 파싱을 IngestLens에 맡길 때 (선택, 5절의 앱 서버 주소와 .env 의 RAG_API_KEY)
+CONTENT_EXTRACTION_ENGINE=external
+EXTERNAL_DOCUMENT_LOADER_URL=http://<IngestLens 서버>:8000/api/openwebui
+EXTERNAL_DOCUMENT_LOADER_API_KEY=<RAG_API_KEY 값>
+
+# 오프라인: 모델 다운로드와 버전 확인을 끈다
+OFFLINE_MODE=true
+```
+
+docker로 띄우는 예:
+
+```bash
+docker run -d --name open-webui -p 3000:8080 \
+  --add-host host.docker.internal:host-gateway \
+  -v open-webui:/app/backend/data \
+  --env-file openwebui.env \
+  ghcr.io/open-webui/open-webui:main          # :cuda 가 아닌 일반 이미지. GPU를 쓰지 않는다
+```
+
+오프라인 서버라면 이 이미지도 `docker save`/`docker load`로 반입한다.
+
+### 8-2. 관리자 화면에서 설정할 때
+
+관리자 설정 → 문서에서 같은 값을 넣는다.
+
+| 항목 | 값 |
+|---|---|
+| 임베딩 모델 엔진 | OpenAI |
+| API Base URL | `http://<모델 서버>:8090/v1` |
+| 임베딩 모델 | `bge-m3` |
+| 하이브리드 검색 | 켬 |
+| Reranking 엔진 | External |
+| Reranking URL | `http://<모델 서버>:8090/v1/rerank` |
+| Reranking 모델 | `bge-reranker-v2-m3` |
+| 콘텐츠 추출 엔진 (선택) | External, `http://<IngestLens 서버>:8000/api/openwebui` |
+
+### 8-3. 주의할 점
+
+- **환경 변수는 처음 시작할 때만 반영된다.**
+  - Open WebUI는 이 설정들을 처음 시작할 때 자기 DB에 저장하고, 그 뒤로는 DB 값을 쓴다.
+  - 이미 운영 중인 Open WebUI라면 관리자 화면에서 바꾼다.
+  - 또는 `ENABLE_PERSISTENT_CONFIG=false`로 매번 환경 변수를 읽게 한다.
+- **임베딩 모델을 바꾸면 기존 지식 베이스를 다시 색인해야 한다.** 이전 모델로 만든 벡터와 섞이면 검색이 맞지 않는다.
+- **`:cuda` 이미지와 `USE_CUDA_DOCKER=true`를 쓰지 않는다.** Open WebUI가 GPU를 잡으면 모델 서버와 함께 "프로세스 1개" 조건을 넘는다.
+- **모델 서버는 요청을 하나씩 처리한다.** IngestLens와 Open WebUI가 동시에 많이 요청하면 순서를 기다린다. 이 PC 기준 임베딩 210개가 0.75초, rerank 15개가 0.06초라 보통 사용량에서는 문제가 없다.
+- **확인 범위:**
+  - 요청과 응답 형식은 Open WebUI 소스(`retrieval/models/external.py`의 `{model, query, documents, top_n}` → `results[].index`, `relevance_score`)와 맞춰 확인했다.
+  - 실제 Open WebUI를 모델 서버에 붙여 검색해 보지는 않았다. 처음 붙일 때 Open WebUI의 지식 베이스에 문서 하나를 넣고 질문해서 확인한다. 모델 서버 로그(`./model-server.sh logs`)에 `/v1/embeddings`, `/v1/rerank` 요청이 찍히는지 본다.
+
+## 9. 라이선스
 
 - IngestLens는 MIT 라이선스다(`LICENSE`, `NOTICE.md`). 회사 안팎 어디서 쓰든 소스 공개 의무가 없다.
 - 설치되는 Python 패키지의 라이선스는 `NOTICE.md`에 있다.

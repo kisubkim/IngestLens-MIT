@@ -207,6 +207,29 @@ def test_truncated_vlm_answer_is_retried_with_larger_limit(monkeypatch):
     assert kw["rule_id"] == "vlm_truncated_retry" and kw["inputs"]["truncated_again"] is False
 
 
+def test_truncated_table_reextraction_keeps_native_table(monkeypatch):
+    """A VLM table answer still cut off after the retry (repetition loop) must not replace the native table."""
+    from collections import Counter
+
+    from app.agents import parser
+    from app.tools import vlm
+
+    decisions = []
+    monkeypatch.setattr(parser, "record_decision", lambda *a, **k: decisions.append(k))
+    monkeypatch.setattr(parser, "emit_event", lambda *a, **k: None)
+    native = {"type": "table", "bbox": [10, 10, 200, 100], "content": "|a|b|\n|---|---|\n|39,456<br>3,691||",
+              "source_tool": "native_tables", "meta": {"empty_cell_ratio": 0.7}}
+    loop = vlm.VLMResult("| 2024년 " * 500, "length", 15.0)
+    job = {"kind": "table", "bbox": native["bbox"], "target": native, "result": loop,
+           "retry": {"max_tokens": 2048, "retry_max_tokens": 4096, "first_seconds": 15.0}}
+    prep = {"elements": [native], "fallback": [], "jobs": [job]}
+    pcfg = {"captions": {"pattern": "^표", "max_gap": 40}, "tables": {"max_empty_cell_ratio": 0.5}}
+    els = parser._merge("run", 1, "table", prep, pcfg, Counter())
+    table = next(e for e in els if e["type"] == "table")
+    assert table["source_tool"] == "native_tables" and "39,456" in table["content"]
+    assert [d["rule_id"] for d in decisions] == ["vlm_truncated_retry", "vlm_table_truncated"]
+
+
 def test_vlm_parsers_with_mock(sample_pdf, monkeypatch):
     _mock_vlm(monkeypatch)
     with TestClient(app) as client:

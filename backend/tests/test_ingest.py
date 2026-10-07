@@ -37,7 +37,9 @@ def test_openwebui_loader_returns_chunks(sample_pdf):
         assert docs and all(d["page_content"] for d in docs)
         meta = docs[0]["metadata"]
         assert meta["source"] == "보고서 샘플.pdf"
-        assert meta["page"] >= 1
+        # 0-based like LangChain PDF loaders, because Open WebUI displays page + 1
+        assert meta["page"] == int(meta["page_label"]) - 1 == int(meta["pages"].split(",")[0]) - 1
+        assert docs[0]["metadata"]["page"] == 0
         assert all(isinstance(v, (str, int)) for d in docs for v in d["metadata"].values())
         run = client.get(f"/api/runs/{meta['run_id']}").json()
         assert run["status"] == "succeeded"

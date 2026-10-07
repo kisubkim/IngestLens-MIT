@@ -102,6 +102,8 @@ async def openwebui_process(
         name = s.get(Document, doc["id"]).filename
         chunks = s.scalars(select(Chunk).where(Chunk.run_id == run["id"]).order_by(Chunk.seq)).all()
         # Metadata values stay scalar: some vector stores behind Open WebUI reject lists.
+        # `page` is 0-based like LangChain's PDF loaders: Open WebUI shows it as page + 1 and opens `#page={page + 1}`.
+        # `page_label` and `pages` are the 1-based numbers people read.
         return [
             {
                 "page_content": c.text,
@@ -110,7 +112,7 @@ async def openwebui_process(
                     "document_id": doc["id"],
                     "run_id": run["id"],
                     "chunk_id": c.id,
-                    "page": min(c.pages) + 1 if c.pages else 0,
+                    **({"page": min(c.pages), "page_label": str(min(c.pages) + 1)} if c.pages else {}),
                     "pages": ",".join(str(p + 1) for p in c.pages),
                     "section": c.section or "",
                     "element_types": ",".join(c.element_types),

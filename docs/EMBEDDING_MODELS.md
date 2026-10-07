@@ -18,6 +18,7 @@
 ## 2. 이 프로젝트에서 모델을 바꾸는 방법
 
 - `models.yaml`의 `embedding.base_url`과 `embedding.model`만 바꾸면 된다. OpenAI 호환 `/v1/embeddings`를 제공하면 어떤 모델이든 된다.
+- 오프라인 배포의 모델 서버(`deploy/model-server.env`의 `EMBED_MODEL`, `EMBED_NAME`)로 서빙할 때는 그 설정도 함께 바꾼다. 모델 서버는 bge-m3 방식(CLS 토큰, L2 정규화)으로 dense 벡터를 만든다. 평균 풀링을 쓰는 모델(e5, gte 등)로 바꾸면 `deploy/model-server/server.py`의 풀링도 맞춰야 한다.
 - 차원은 모델 응답에서 자동으로 알아낸다(`tools/embedding.py`). `embedding.dim`은 dev-hash 임베더와 검증에만 쓴다.
 - 벡터는 "모델 이름 + 차원"별 Qdrant 컬렉션에 저장된다(예: `chunks__bge_m3__1024`). 그래서 모델을 바꿔도 기존 벡터와 섞이지 않는다.
 - **검색은 현재 설정된 모델의 컬렉션만 본다.** 모델을 바꾼 뒤에는 기존 문서를 다시 실행해야 새 모델로 검색된다.

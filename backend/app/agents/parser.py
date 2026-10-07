@@ -161,6 +161,15 @@ def _merge(run_id: str, page: int, label: str, prep: dict, pcfg: dict, stats: Co
                 emit_event(run_id, "warning", STEP, f"page {page + 1}: table re-extraction failed, kept native table", {"error": err})
                 continue
             before = t["meta"]["empty_cell_ratio"]
+            if res.finish_reason == "length":
+                # Still cut off after the retry: usually a repetition loop, and at best a partial table.
+                # The native table has every cell's text, only grouped badly, so it loses less.
+                record_decision(run_id, STEP, f"page {page + 1}", "keep native table", rule_id="vlm_table_truncated",
+                                inputs={"empty_cell_ratio": before, "answer_chars": len(res.text), "bbox": t["bbox"]},
+                                alternatives=[{"choice": "VLM table", "reason_rejected": "answer cut off at max_tokens (incomplete or repeating)"}],
+                                confidence=0.6,
+                                reasoning="The VLM re-extraction did not finish, so the native table (complete text, merged cells) is kept.")
+                continue
             t["content"], t["source_tool"] = strip_fences(res.text), "vlm_table"
             t["meta"]["reextracted"] = True
             stats["tables_reextracted"] += 1

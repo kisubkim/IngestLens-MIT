@@ -282,6 +282,31 @@ export interface PurgeResult {
 }
 
 /** Turn the server's refusal into a sentence the user can act on. */
+export class ApiError extends Error {
+  constructor(message: string, readonly status: number) {
+    super(message);
+  }
+}
+
+/** RAG_API_KEY typed on the settings screen or at a delete prompt, kept for this browser tab only. */
+export const adminKey = {
+  get(): string {
+    try {
+      return sessionStorage.getItem("ingestlens.adminKey") ?? "";
+    } catch {
+      return "";
+    }
+  },
+  set(key: string) {
+    try {
+      if (key) sessionStorage.setItem("ingestlens.adminKey", key);
+      else sessionStorage.removeItem("ingestlens.adminKey");
+    } catch {
+      /* storage blocked: the key is just asked again next time */
+    }
+  },
+};
+
 async function purgeJson(res: Response): Promise<PurgeResult> {
   if (res.ok) return res.json();
   const reason =
@@ -292,7 +317,7 @@ async function purgeJson(res: Response): Promise<PurgeResult> {
         : res.status === 401
           ? "API 키가 맞지 않습니다."
           : `${res.status} ${await res.text()}`;
-  throw new Error(reason);
+  throw new ApiError(reason, res.status);
 }
 
 export type StatusState ="ok" | "warn" | "off" | "error";
@@ -365,7 +390,7 @@ export const api = {
     fetch("/api/evals/vlm").then(json<{ dir: string; items: VlmEvalItem[]; errors: { file: string; error: string }[] }>),
   overview: () => fetch("/api/overview").then(json<Overview>),
   elementStats: (runId: string) => fetch(`/api/runs/${runId}/element-stats`).then(json<ElementStats>),
-  deleteDocument: (docId: string, apiKey?: string) =>
+  deleteDocument: (docId: string, apiKey: string = adminKey.get()) =>
     fetch(`/api/documents/${docId}`, { method: "DELETE", headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : {} }).then(purgeJson),
   deleteAll: (apiKey?: string) =>
     fetch("/api/documents?confirm=all", { method: "DELETE", headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : {} }).then(purgeJson),

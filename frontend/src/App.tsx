@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, type Doc } from "./api";
+import { adminKey, api, ApiError, type Doc } from "./api";
 import RunView from "./RunView";
 import EvalView from "./EvalView";
 import HomeView from "./HomeView";
@@ -98,7 +98,21 @@ export default function App() {
     if (!ok) return;
     setError(null);
     try {
-      await api.deleteDocument(selected.id);
+      try {
+        await api.deleteDocument(selected.id);
+      } catch (e) {
+        // The server has RAG_API_KEY and this tab has no (or a wrong) key yet: ask once, remember it, retry.
+        if (!(e instanceof ApiError && e.status === 401)) throw e;
+        const key = window.prompt("문서를 삭제하려면 관리자 키(서버의 RAG_API_KEY)를 입력하세요.");
+        if (!key) return;
+        try {
+          await api.deleteDocument(selected.id, key);
+        } catch (e2) {
+          adminKey.set("");
+          throw e2;
+        }
+        adminKey.set(key);
+      }
       setPending((prev) => prev.filter((id) => id !== selected.id));
       setSelected(null);
       setRunId(null);

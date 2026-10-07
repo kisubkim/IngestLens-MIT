@@ -1,6 +1,6 @@
 # 진행 상황
 
-2026-10-05 기준이다. IngestLens v1.0.0(AGPL-3.0)을 MIT 라이선스로 배포하기 위한 작업을 정리한다. 전체 상태와 백로그는 `docs/HANDOFF.md`, 라이선스 근거는 `NOTICE.md`에 있다.
+2026-10-08 기준이다. IngestLens v1.0.0(AGPL-3.0)을 MIT 라이선스로 배포하기 위한 작업을 정리한다. 전체 상태와 백로그는 `docs/HANDOFF.md`, 라이선스 근거는 `NOTICE.md`에 있다.
 
 ## 1. 요약
 
@@ -8,7 +8,7 @@
 |---|---|
 | PyMuPDF 제거, MIT 전환 | 완료 (2026-10-04). 커밋 `bf70559` |
 | GitHub 저장소 연결, push | 완료. https://github.com/kisubkim/IngestLens-MIT (`main`) |
-| 원본 IngestLens의 새 기능 반영 | 완료 (2026-10-05). 원본 `19aab24`까지. Docker 이미지 관련 부분은 제외 |
+| 원본 IngestLens의 새 기능 반영 | 완료. 2026-10-05에 `19aab24`까지, 2026-10-08에 main `ffb962c`까지. Docker·Singularity 이미지 관련 부분은 제외 |
 | 실제 문서로 PDF 처리 결과 비교 | 실제 공개 문서 10종과 합성 VLM 세트를 실제 모델(`qwen2.5vl:7b`)로 비교함(2절) |
 
 ## 2. 완료한 것
@@ -52,20 +52,37 @@ MIT 버전에 맞게 고친 것:
 
 ### 2-3. 검증 (2026-10-05)
 
-- 백엔드 테스트 62개 통과(기존 46 + 새 16). 화면 빌드(`npm run build`, tsc 포함) 통과.
+- 백엔드 테스트 64개 통과(기존 46 + 원본에서 온 16 + 이번에 더한 회귀 테스트 2). 화면 빌드(`npm run build`, tsc 포함) 통과.
 - 8010 포트로 앱을 띄워 상태 화면 API가 실제 모델 3개(임베딩, VLM, reranker)를 "정상"으로 잡는 것, 평가 결과 5개 목록, 첫 화면 현황, 실제 `bge-m3`로 처리한 docx 문서의 삭제(벡터까지 0개)를 확인했다.
 - **갈린 체크의 원인과 보정**: 좌우 바깥 세로선이 없는 "열린 표"에서 pdfplumber가 행 이름 열과 마지막 열(`168,671`)을 버렸다(PyMuPDF는 잡았다). 가로 규칙선 양 끝에 가상 테두리를 더하는 보정(`tools/pdf.py` `_open_side_edges`)을 넣어 그 표가 7열 → 9열로 돌아온 것을 확인했고 회귀 테스트를 더했다(`test_open_sided_table_keeps_outer_columns`). 평가 PDF 12개 전체에서 이 보정으로 바뀐 표는 국가데이터처 보도자료의 열린 표뿐이었다. 같은 페이지의 표 2는 VLM 재추출이 빈 열만 반복하는 답을 냈다(원본 실행에서는 정상). 크롭이 달라서인지 모델이 우연히 실패했는지는 다시 돌려 봐야 안다.
-- **보정 후 실제 모델로 다시 재지 못했다**: 다시 돌리던 중 원본 쪽 Docker 스택의 Ollama(11435)와 Docker Desktop이 응답을 멈췄다(`docker ps`도 60초 안에 응답 없음). 원본 스택이라 재시작하지 않았다.
+- **표 2의 VLM 재추출 실패**: 같은 크롭을 직접 보내 보니 넓은 크롭(보정 후)은 2번 모두, 좁은 크롭(보정 전)도 2번 중 1번 머리글 반복으로 `max_tokens`에서 잘렸다. 모델이 이 표에서 원래 흔들린다. 원본의 3b 실행은 재추출이 오류로 끝나 원래 표를 지켜서 통과했다. 그래서 **재시도 후에도 잘린 표 답은 버리고 원래 표를 유지**하게 바꿨다(`vlm_table_truncated` 결정, `test_truncated_table_reextraction_keeps_native_table`). 원래 표에는 모든 셀 글자가 들어 있다(행이 한 셀로 뭉칠 뿐).
+- 두 보정 뒤 다시 잰 결과가 위 표의 92%(38/43)다(`evals/results/vlm/20261004-181351_ollama-qwen2.5vl-7b.json`). 중간에 원본 쪽 Docker Desktop이 한동안 응답을 멈춰 재측정이 늦어졌다.
 - **실제 모델로 원본과 비교**: 원본이 기록한 결과와 같은 입력 PDF, 같은 모델 구성(Ollama `qwen2.5vl:7b` + `bge-m3`, reranker `bge-reranker-v2-m3` CPU, RTX 5070 Ti)으로 `eval_vlm.py`를 돌렸다. 달라진 것은 PDF 처리 스택뿐이다.
 
 | 세트 | 원본 (PyMuPDF) | 이 버전 | 차이 |
 |---|---|---|---|
 | 합성 5페이지 (`evals/vlm/`) | 92% (17/19), OCR CER 0 | 92% (17/19), OCR CER 0 | 같음. 실패 2개(그림 설명이 영어)도 같다 |
-| 실제 공개 문서 10종 (`evals/samples/`) | 92% (38/43) | 91% (37/43), 열린 표 보정 전 | 17페이지 중 16페이지는 체크 결과가 같다. 갈린 것은 국가데이터처 보도자료 2쪽의 표 셀 체크 하나(아래) |
+| 실제 공개 문서 10종 (`evals/samples/`) | 92% (38/43) | 처음 91% (37/43) → 보정 2개 후 **92% (38/43)** | 보정 후 17페이지 모두 체크 결과가 원본과 같다 |
+
+### 2-4. 원본 main 추가 반영 (2026-10-08)
+
+원본 main에 생긴 커밋 4개(`56afa46`, `6030df0`, `f5ba5cc`, `ffb962c`)를 확인하고, 원본 main과 파일 단위로 다시 대조했다.
+
+들어온 것:
+- **Open WebUI 쪽 번호 수정**: `/api/openwebui/process`의 metadata `page`를 0부터 보낸다(Open WebUI가 +1 해서 보여준다). `page_label`, `pages`는 1부터.
+- **문서 하나 삭제의 관리자 키**: `RAG_API_KEY`가 설정된 서버에서 문서 화면의 "문서 삭제"가 키 없이 요청해 401로 실패하던 문제. 키를 묻고 그 탭에서 기억한다(화면 3개 파일).
+- **Open WebUI 연동 가이드** `deploy/OPENWEBUI.md`와, Open WebUI가 임베딩·rerank 모델 서버를 함께 쓰는 설정(`deploy/README.md` 8절). IngestLens를 Docker·Singularity로 띄운다는 부분은 이 저장소의 실행 방법(uvicorn, `deploy/model-server.sh`)으로 바꿨다. Open WebUI 자체를 Docker로 띄우는 예시는 Open WebUI 쪽 이야기라 그대로 뒀다.
+- NOTICE(Qwen2.5-VL 3B 비상업 조건, Ollama MIT, 별도 프로그램 안내), README, HANDOFF(마일스톤, 검증 수준, 백로그, 측정, 함정), EMBEDDING_MODELS.
+
+뺀 것: Singularity/Apptainer 이미지(`deploy/singularity.sh`, `singularity.env.example`, `docker/model-server/release.Dockerfile`, `build_offline_bundle.py --singularity`), Docker Desktop 약관과 배포 이미지 구성 요소(NOTICE의 해당 부분). Docker처럼 컨테이너 이미지를 만드는 부분이라 같은 기준으로 뺐다.
+
+원본 main과 대조한 결과, 남은 차이는 모두 의도한 것이다: PDF 라이브러리 교체(코드, 테스트, 생성 스크립트), Docker·Singularity 제외, 모델 서버 위치(`deploy/model-server/`), MIT 문서, 이 저장소에서 더한 것(열린 표 보정, 잘린 표 답 처리, `config/models.ollama.yaml`, 평가 결과 2개). 원본 작업 폴더에 커밋되지 않은 파일(`api/chunks.py` 등)은 main에 없어서 넣지 않았다.
+
+검증: 테스트 64개 통과, 화면 빌드 통과.
 
 ## 3. 다음에 할 일
 
-1. **보정 후 실제 문서 평가를 다시 돌린다**: Ollama(또는 vLLM)를 띄운 뒤 `python scripts/eval_vlm.py --models <설정> --cases evals/samples/cases.json`. 표 1이 고쳐져 `table_cells`가 통과하는지, 표 2의 VLM 재추출이 다시 실패하는지 본다. 결과 JSON은 `evals/results/vlm/`에 넣는다.
+1. **원본 IngestLens에도 "잘린 표 답은 원래 표 유지" 수정을 알린다**: 원본도 같은 약점이 있다(이번 원본 결과의 통과는 7b가 우연히 성공했거나 3b가 오류로 끝난 덕분이다).
 2. **Linux 서버 확인**: 이 버전(새 PDF 라이브러리)은 Linux에서 돌려 본 적이 없다. 한글 TrueType 폰트(`fonts-nanum`) 설치, "office font" 결정이 `font_system`/`font_configured`인지, 프로세스 풀 동작.
 3. **모델 서버 실제 운영 GPU 확인**: Exclusive_Process 모드에서 `./model-server.sh status`로 GPU 프로세스가 1개인지.
 4. **원본 IngestLens와 계속 맞추기**: 원본에 기능이 더 생기면 같은 방식(3-way 적용 → PyMuPDF 사용처 교체 → Docker 이미지 부분 제외)으로 반영한다. 이번 반영 기준은 원본 `19aab24`다.
